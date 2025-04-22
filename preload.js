@@ -1,14 +1,25 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("aiBrowser", {
+  // Command execution and plan handling
   executeCommand: (command) => ipcRenderer.invoke("execute-command", command),
   onPlanUpdate: (callback) =>
     ipcRenderer.on("plan-update", (event, plan) => callback(plan)),
+
+  // Page snapshot functionality
+  onGetPageSnapshot: (callback) =>
+    ipcRenderer.on("get-page-snapshot", () => callback()),
+  sendPageSnapshot: (pageData) =>
+    ipcRenderer.invoke("page-snapshot-result", pageData),
+
+  // Logging
   logAction: (record) => ipcRenderer.send("log-action", record),
 
-  // Add browser functionality
+  // Browser functionality
   webviewAction: (action, data) =>
     ipcRenderer.invoke("webview-action", action, data),
   onWebviewDevTools: (callback) =>
     ipcRenderer.on("toggle-webview-devtools", () => callback()),
+  onBrowserAction: (callback) =>
+    ipcRenderer.on("browser-action", (event, data) => callback(data)),
 });

@@ -4,13 +4,39 @@
   "description": "Chromium-based AI-enabled browser",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dev": "electron . --debug",
+    "build": "electron-builder"
   },
   "dependencies": {
     "dotenv": "^10.0.0",
     "openai": "^4.8.0"
   },
   "devDependencies": {
-    "electron": "^25.0.0"
+    "electron": "^25.0.0",
+    "electron-builder": "^24.6.3"
+  },
+  "build": {
+    "appId": "com.ai-browser.app",
+    "productName": "AI Browser",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!**/.git",
+      "!**/.git/**",
+      "!**/.DS_Store",
+      "!**/.history/**"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }
