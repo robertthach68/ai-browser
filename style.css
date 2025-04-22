@@ -3,6 +3,7 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 #prompt-bar {
   position: fixed;
@@ -18,15 +19,65 @@ body {
   box-sizing: border-box;
   z-index: 1000;
 }
+
+/* Browser navigation controls */
+#nav-controls {
+  display: flex;
+  align-items: center;
+  margin-right: 15px;
+}
+
+#nav-controls button {
+  background: none;
+  border: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#nav-controls button:hover {
+  background-color: #ddd;
+}
+
+#nav-controls button:disabled {
+  color: #ccc;
+  cursor: default;
+}
+
+#url-display {
+  font-size: 12px;
+  color: #555;
+  margin: 0 10px;
+  max-width: 200px;
+}
+
+/* Original styles */
 #command-input {
   flex: 1;
   height: 24px;
   margin-right: 10px;
   padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
 }
 #execute-btn {
   height: 28px;
   margin-right: 10px;
+  background: #4285f4;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+#execute-btn:hover {
+  background: #3b78e7;
 }
 #status {
   font-size: 12px;

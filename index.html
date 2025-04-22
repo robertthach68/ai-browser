@@ -15,6 +15,9 @@
     id="webview"
     src="https://www.google.com"
     style="width:100%; height:calc(100% - 40px);"
+    allowpopups
+    webpreferences="plugins=true, javascript=true"
+    partition="persist:browsersession"
   ></webview>
   <script src="renderer.js"></script>
 </body>

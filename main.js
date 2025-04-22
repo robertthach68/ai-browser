@@ -1,11 +1,14 @@
 require("dotenv").config();
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { Configuration, OpenAIApi } = require("openai");
+const OpenAI = require("openai");
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+let mainWindow;
 
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
@@ -13,9 +16,59 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webviewTag: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     },
   });
-  win.loadFile("index.html");
+
+  mainWindow.loadFile("index.html");
+
+  // Create Chrome-like application menu
+  const template = [
+    {
+      label: "File",
+      submenu: [{ role: "quit" }],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Learn More",
+          click: async () => {
+            await shell.openExternal("https://electronjs.org");
+          },
+        },
+      ],
+    },
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
 app.whenReady().then(createWindow);
@@ -24,15 +77,36 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
-const openai = new OpenAIApi(configuration);
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+// Handle webview actions from renderer
+ipcMain.handle("webview-action", async (event, action, data) => {
+  switch (action) {
+    case "toggle-devtools":
+      mainWindow.webContents.send("toggle-webview-devtools");
+      return { status: "ok" };
+    case "clear-cache":
+      await mainWindow.webContents.session.clearCache();
+      return { status: "ok", message: "Browser cache cleared" };
+    case "clear-cookies":
+      await mainWindow.webContents.session.clearStorageData({
+        storages: ["cookies"],
+      });
+      return { status: "ok", message: "Cookies cleared" };
+    default:
+      return { status: "error", message: "Unknown action" };
+  }
+});
+
 const LOG_PATH = path.join(app.getPath("userData"), "actions.log");
 
 ipcMain.handle("execute-command", async (event, command) => {
   try {
     console.log("Received command from renderer:", command);
     const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and output a JSON array of steps. Each step has 'action', 'selector', and optional 'value' or 'url'. Allowed actions: click, type, scroll, navigate.`;
-    const chat = await openai.createChatCompletion({
+    const chat = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
         { role: "system", content: systemPrompt },
@@ -40,10 +114,12 @@ ipcMain.handle("execute-command", async (event, command) => {
       ],
       max_tokens: 500,
     });
-    const content = chat.data.choices[0].message.content;
+    const content = chat.choices[0].message.content;
     let plan;
     try {
-      plan = JSON.parse(content);
+      // Extract JSON if it's wrapped in markdown code blocks
+      const jsonContent = content.replace(/```json\n|\n```/g, "").trim();
+      plan = JSON.parse(jsonContent);
     } catch (err) {
       throw new Error(
         "Failed to parse plan JSON: " + err.message + ". Content: " + content
