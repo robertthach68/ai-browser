@@ -1,0 +1,3 @@
+# Git ignore
+node_modules/
+.env
