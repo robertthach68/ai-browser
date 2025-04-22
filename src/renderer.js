@@ -120,28 +120,54 @@ class App {
 
         // Get page content via JavaScript execution in the webview
         const content = await this.webview.executeJavaScript(`
-          (() => {
-            return {
-              html: document.documentElement.outerHTML,
-              text: document.body.innerText.substring(0, 5000),
-              links: Array.from(document.links).map(link => ({
-                text: link.innerText,
-                href: link.href
-              })).slice(0, 50),
-              inputs: Array.from(document.querySelectorAll('input, textarea')).map(input => ({
-                type: input.type,
-                id: input.id,
-                name: input.name,
-                placeholder: input.placeholder
-              }))
-            };
+          (function() {
+            try {
+              const doc = document;
+              return {
+                html: doc.documentElement.outerHTML,
+                text: doc.body ? doc.body.innerText.substring(0, 5000) : "",
+                links: Array.from(doc.links || []).map(link => ({
+                  text: link.innerText || link.textContent || "",
+                  href: link.href || ""
+                })).slice(0, 50),
+                inputs: Array.from(doc.querySelectorAll('input, textarea') || []).map(input => ({
+                  type: input.type || "text",
+                  id: input.id || "",
+                  name: input.name || "",
+                  placeholder: input.placeholder || ""
+                })),
+                // Add more detailed DOM information
+                headings: Array.from(doc.querySelectorAll('h1, h2, h3') || []).map(h => ({
+                  level: h.tagName.toLowerCase(),
+                  text: h.innerText || h.textContent || ""
+                })).slice(0, 20),
+                buttons: Array.from(doc.querySelectorAll('button') || []).map(btn => ({
+                  text: btn.innerText || btn.textContent || "",
+                  id: btn.id || "",
+                  disabled: btn.disabled || false
+                })).slice(0, 20)
+              };
+            } catch (err) {
+              console.error("Error in page content extraction:", err);
+              return {
+                html: "",
+                text: "Error extracting page content: " + err.message,
+                links: [],
+                inputs: [],
+                headings: [],
+                buttons: []
+              };
+            }
           })();
         `);
 
+        console.log("Successfully captured page content");
         const pageData = { url, title, content };
         await window.aiBrowser.sendPageSnapshot(pageData);
       } catch (error) {
         console.error("Error capturing page snapshot:", error);
+        // Send empty data if there was an error
+        await window.aiBrowser.sendPageSnapshot({});
       }
     });
   }

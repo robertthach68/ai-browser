@@ -15,21 +15,43 @@ class AIConnector {
       const url = await webview.getURL();
       const title = await webview.getTitle();
       const content = await webview.executeJavaScript(`
-        (() => {
-          return {
-            html: document.documentElement.outerHTML,
-            text: document.body.innerText.substring(0, 5000), // Limit text capture
-            links: Array.from(document.links).map(link => ({
-              text: link.innerText,
-              href: link.href
-            })).slice(0, 50), // Limit number of links
-            inputs: Array.from(document.querySelectorAll('input, textarea')).map(input => ({
-              type: input.type,
-              id: input.id,
-              name: input.name,
-              placeholder: input.placeholder
-            }))
-          };
+        (function() {
+          try {
+            const doc = document;
+            return {
+              html: doc.documentElement.outerHTML,
+              text: doc.body ? doc.body.innerText.substring(0, 5000) : "",
+              links: Array.from(doc.links || []).map(link => ({
+                text: link.innerText || link.textContent || "",
+                href: link.href || ""
+              })).slice(0, 50),
+              inputs: Array.from(doc.querySelectorAll('input, textarea') || []).map(input => ({
+                type: input.type || "text",
+                id: input.id || "",
+                name: input.name || "",
+                placeholder: input.placeholder || ""
+              })),
+              headings: Array.from(doc.querySelectorAll('h1, h2, h3') || []).map(h => ({
+                level: h.tagName.toLowerCase(),
+                text: h.innerText || h.textContent || ""
+              })).slice(0, 20),
+              buttons: Array.from(doc.querySelectorAll('button') || []).map(btn => ({
+                text: btn.innerText || btn.textContent || "",
+                id: btn.id || "",
+                disabled: btn.disabled || false
+              })).slice(0, 20)
+            };
+          } catch (err) {
+            console.error("Error in page content extraction:", err);
+            return {
+              html: "",
+              text: "Error extracting page content: " + err.message,
+              links: [],
+              inputs: [],
+              headings: [],
+              buttons: []
+            };
+          }
         })();
       `);
 
@@ -52,21 +74,20 @@ class AIConnector {
    */
   async generatePlan(command, pageSnapshot = {}) {
     try {
-      const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a JSON array of steps. Each step has 'action', 'selector', and optional 'value' or 'url'. Allowed actions: click, type, scroll, navigate.`;
+      const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a JSON array of steps. Each step has 'action', 'selector', and optional 'value' or 'url'. 
 
-      // Create a concise representation of the page with defensive programming
-      const pageContent = pageSnapshot.content || {};
-      const pageContext = {
-        url: pageSnapshot.url || "about:blank",
-        title: pageSnapshot.title || "",
-        availableInputs: pageContent.inputs || [],
-        availableLinks: pageContent.links || [],
-        pageText: pageContent.text ? pageContent.text.substring(0, 1000) : "", // Limit text for token efficiency
-      };
+Allowed actions:
+- navigate: requires url parameter
+- click: requires selector parameter 
+- type: requires selector and value parameters
+- scroll: requires value parameter (number of pixels)
+
+For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed.`;
 
       // If we don't have page info, create a simple navigation plan
       if (!pageSnapshot.url && command.toLowerCase().includes("go to")) {
         const targetUrl = this.extractUrlFromCommand(command);
+        console.log(`Creating a simple navigation plan to ${targetUrl}`);
         return [
           {
             action: "navigate",
@@ -75,28 +96,62 @@ class AIConnector {
         ];
       }
 
+      // Create a concise representation of the page with defensive programming
+      const pageContent = pageSnapshot.content || {};
+
+      // Build a structured overview of the page
+      const pageContext = {
+        url: pageSnapshot.url || "about:blank",
+        title: pageSnapshot.title || "",
+        availableInputs: pageContent.inputs || [],
+        availableLinks: pageContent.links || [],
+        headings: pageContent.headings || [],
+        buttons: pageContent.buttons || [],
+      };
+
+      // Add first 500 chars of page text for context
+      const pageText = pageContent.text
+        ? `Page text snippet: ${pageContent.text.substring(0, 500)}...`
+        : "No page text available";
+
+      console.log("Sending command to OpenAI:", command);
+      console.log("Page context URL:", pageContext.url);
+
       const chat = await this.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: [
           { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: `Command: ${command}\nCurrent page: ${JSON.stringify(
+            content: `Command: ${command}\n\nCurrent page: ${JSON.stringify(
               pageContext
-            )}`,
+            )}\n\n${pageText}`,
           },
         ],
         max_tokens: 500,
+        response_format: { type: "json_object" },
       });
 
       const responseContent = chat.choices[0].message.content;
       console.log("Response content:", responseContent);
+
       try {
-        // Extract JSON if it's wrapped in markdown code blocks
-        const jsonContent = responseContent
-          .replace(/```json\n|\n```/g, "")
-          .trim();
-        return JSON.parse(jsonContent);
+        // Parse the JSON response
+        const parsedResponse = JSON.parse(responseContent);
+
+        // Check if we got a steps array, or if it's nested inside a property
+        const steps = Array.isArray(parsedResponse)
+          ? parsedResponse
+          : parsedResponse.steps ||
+            parsedResponse.actions ||
+            parsedResponse.plan ||
+            [];
+
+        if (steps.length === 0) {
+          throw new Error("No steps found in AI response");
+        }
+
+        return steps;
       } catch (err) {
         throw new Error(
           "Failed to parse plan JSON: " +

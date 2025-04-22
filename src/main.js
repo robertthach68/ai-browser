@@ -105,10 +105,14 @@ function setupIpcHandlers() {
   // Handle page snapshot result from renderer
   ipcMain.handle("page-snapshot-result", async (event, pageData) => {
     const senderId = event.sender.id;
+    console.log(
+      "Received page snapshot from renderer",
+      pageData ? `with URL: ${pageData.url || "none"}` : "with no data"
+    );
 
     // If there's a pending promise for this sender, resolve it
     if (pendingPageSnapshotPromises[senderId]) {
-      pendingPageSnapshotPromises[senderId].resolve(pageData);
+      pendingPageSnapshotPromises[senderId].resolve(pageData || {});
       delete pendingPageSnapshotPromises[senderId];
     }
 
@@ -131,16 +135,24 @@ function getPageSnapshot(senderId) {
     // Store the promise callbacks for later resolution
     pendingPageSnapshotPromises[senderId] = { resolve, reject };
 
-    // Request the renderer to send a page snapshot
-    mainWindow.webContents.send("get-page-snapshot");
+    try {
+      // Request the renderer to send a page snapshot
+      mainWindow.webContents.send("get-page-snapshot");
 
-    // Set a timeout in case the renderer doesn't respond
-    setTimeout(() => {
-      if (pendingPageSnapshotPromises[senderId]) {
-        reject(new Error("Timeout waiting for page snapshot"));
-        delete pendingPageSnapshotPromises[senderId];
-      }
-    }, 5000);
+      // Set a timeout in case the renderer doesn't respond
+      setTimeout(() => {
+        if (pendingPageSnapshotPromises[senderId]) {
+          console.log("Timeout waiting for page snapshot, using fallback");
+          // Resolve with an empty object rather than rejecting
+          // This ensures the command will still work even if snapshot fails
+          resolve({});
+          delete pendingPageSnapshotPromises[senderId];
+        }
+      }, 5000);
+    } catch (error) {
+      console.error("Error requesting page snapshot:", error);
+      resolve({}); // Resolve with empty object instead of rejecting
+    }
   });
 }
 
