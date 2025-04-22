@@ -103,15 +103,32 @@ class BrowserController {
    */
   async navigate(url) {
     return new Promise((resolve, reject) => {
-      this.webview.loadURL(url);
-      this.webview.once("did-finish-load", resolve);
-      this.webview.once("did-fail-load", (event) =>
+      // Use addEventListener instead of once
+      const loadHandler = () => {
+        this.webview.removeEventListener("did-finish-load", loadHandler);
+        resolve();
+      };
+
+      const failHandler = (event) => {
+        this.webview.removeEventListener("did-fail-load", failHandler);
         reject(
           new Error(
             `Failed to load URL: ${url}, error code: ${event.errorCode}`
           )
-        )
-      );
+        );
+      };
+
+      this.webview.addEventListener("did-finish-load", loadHandler);
+      this.webview.addEventListener("did-fail-load", failHandler);
+
+      this.webview.loadURL(url);
+
+      // Add timeout to prevent hanging forever
+      setTimeout(() => {
+        this.webview.removeEventListener("did-finish-load", loadHandler);
+        this.webview.removeEventListener("did-fail-load", failHandler);
+        resolve(); // Resolve anyway to avoid hanging
+      }, 10000);
     });
   }
 

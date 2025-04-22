@@ -468,11 +468,26 @@ class PlanExecutor {
     switch (action) {
       case "navigate":
         await new Promise((resolve, reject) => {
+          const loadHandler = () => {
+            this.webview.removeEventListener("did-finish-load", loadHandler);
+            resolve();
+          };
+
+          const failHandler = () => {
+            this.webview.removeEventListener("did-fail-load", failHandler);
+            reject(new Error("Failed to load " + url));
+          };
+
+          this.webview.addEventListener("did-finish-load", loadHandler);
+          this.webview.addEventListener("did-fail-load", failHandler);
+
           this.webview.loadURL(url);
-          this.webview.once("did-finish-load", resolve);
-          this.webview.once("did-fail-load", () =>
-            reject(new Error("Failed to load " + url))
-          );
+
+          setTimeout(() => {
+            this.webview.removeEventListener("did-finish-load", loadHandler);
+            this.webview.removeEventListener("did-fail-load", failHandler);
+            resolve();
+          }, 10000);
         });
         break;
 

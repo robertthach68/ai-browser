@@ -90,6 +90,7 @@ class AIConnector {
       });
 
       const responseContent = chat.choices[0].message.content;
+      console.log("Response content:", responseContent);
       try {
         // Extract JSON if it's wrapped in markdown code blocks
         const jsonContent = responseContent

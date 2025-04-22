@@ -86,6 +86,7 @@ function setupIpcHandlers() {
         // For more complex commands, we need page data
         try {
           const pageData = await getPageSnapshot(event.sender.id);
+          console.log("Page data:", pageData);
           plan = await aiConnector.generatePlan(command, pageData);
         } catch (error) {
           console.log("Could not get page data, using fallback:", error);
