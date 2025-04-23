@@ -1,21 +1,10 @@
 const OpenAI = require("openai");
 const fs = require("fs");
 const path = require("path");
-const PageContentReader = require("./PageContentReader");
 
 class AIConnector {
   constructor(apiKey) {
     this.openai = new OpenAI({ apiKey });
-    this.pageContentReader = new PageContentReader();
-  }
-
-  /**
-   * Capture a snapshot of the current page
-   * @param {Object} webview - The Electron webview object
-   * @returns {Promise<Object>} Page snapshot data
-   */
-  async capturePageSnapshot(webview) {
-    return await this.pageContentReader.capturePageSnapshot(webview);
   }
 
   /**
@@ -63,9 +52,6 @@ For better accessibility-based selection, use the a11yTree information provided 
         headings: pageContent.headings || [],
         buttons: pageContent.buttons || [],
       };
-
-      // Save pageContext to a file for manual verification
-      this.pageContentReader.savePageContextToFile(pageContext);
 
       // Add first 500 chars of page text for context
       const pageText = pageContent.text

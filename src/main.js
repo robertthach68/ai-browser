@@ -135,7 +135,7 @@ function getPageSnapshot(senderId) {
   return new Promise((resolve, reject) => {
     // Store the promise callbacks for later resolution
     pendingPageSnapshotPromises[senderId] = { resolve, reject };
-
+    console.log("Getting page snapshot from renderer", senderId);
     try {
       // Request the renderer to send a page snapshot
       mainWindow.webContents.send("get-page-snapshot");
