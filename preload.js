@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld("aiBrowser", {
   sendPageSnapshot: (pageData) =>
     ipcRenderer.invoke("page-snapshot-result", pageData),
 
+  // File operations
+  saveFile: (filename, data) => ipcRenderer.invoke("save-file", filename, data),
+
   // Logging
   logAction: (record) => ipcRenderer.send("log-action", record),
 

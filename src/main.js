@@ -1,6 +1,7 @@
 require("dotenv").config();
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
+const fs = require("fs");
 
 // Import our classes
 const AIConnector = require("./services/AIConnector");
@@ -118,6 +119,40 @@ function setupIpcHandlers() {
     }
 
     return { status: "ok" };
+  });
+
+  // Handle file saving
+  ipcMain.handle("save-file", async (event, filename, data) => {
+    try {
+      // Ensure the filename is safe
+      const sanitizedFilename = path.basename(filename);
+
+      // Save to the snapshots directory
+      const snapshotsDir = path.join(process.cwd(), "snapshots");
+
+      // Create snapshots directory if it doesn't exist
+      if (!fs.existsSync(snapshotsDir)) {
+        fs.mkdirSync(snapshotsDir, { recursive: true });
+      }
+
+      const filePath = path.join(snapshotsDir, sanitizedFilename);
+
+      // Write the file to disk
+      fs.writeFileSync(filePath, data, "utf8");
+      console.log(`File saved: ${filePath}`);
+
+      return {
+        status: "ok",
+        message: `File saved: ${sanitizedFilename}`,
+        path: filePath,
+      };
+    } catch (error) {
+      console.error("Error saving file:", error);
+      return {
+        status: "error",
+        error: error.message,
+      };
+    }
   });
 
   // Handle logging actions

@@ -21,13 +21,11 @@ Allowed actions:
 - navigate: requires url parameter
 - click: requires selector parameter 
 - type: requires selector and value parameters
-- scroll: requires value parameter (number of pixels)
 
 For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed. For accessibility, also consider using XPath selectors when appropriate.
 
 IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.
-
-For better accessibility-based selection, use the a11yTree information provided to identify elements by their accessibility properties like role, label, and name. This information is more reliable for finding the right elements, especially when visual elements don't have clear IDs or classes.`;
+`;
 
       // If we don't have page info, create a simple navigation action
       if (!pageSnapshot.url && command.toLowerCase().includes("go to")) {
