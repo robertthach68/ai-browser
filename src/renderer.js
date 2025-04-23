@@ -24,6 +24,17 @@ class App {
    * Set up UI event listeners
    */
   setupUIEventListeners() {
+    // Enable DevTools and console logging for webview
+    this.webview.addEventListener("dom-ready", () => {
+      // Open DevTools for webview
+      this.webview.openDevTools();
+
+      // Listen for console messages
+      this.webview.addEventListener("console-message", (e) => {
+        console.log(`Webview console [${e.level}]: ${e.message}`);
+      });
+    });
+
     // Execute button click
     this.executeBtn.addEventListener("click", async () => {
       const command = this.commandInput.value.trim();
