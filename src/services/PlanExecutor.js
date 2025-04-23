@@ -22,6 +22,7 @@ class PlanExecutor {
     }
 
     const { action: actionType, selector, value, url } = action;
+    console.log("Executing action:", action);
 
     this.updateStatus(`Executing ${actionType}`);
 
@@ -57,7 +58,7 @@ class PlanExecutor {
    * @returns {Promise<void>}
    */
   async executeStep(step) {
-    const { action, selector, value, url } = step;
+    const { action, selector, value, url, xpath } = step;
 
     switch (action) {
       case "navigate":
@@ -88,9 +89,46 @@ class PlanExecutor {
       case "click":
         await this.webview.executeJavaScript(`
           (() => {
-            const el = document.querySelector(${JSON.stringify(selector)});
-            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
+            let el;
+            // Try CSS selector first
+            ${
               selector
+                ? `el = document.querySelector(${JSON.stringify(selector)});`
+                : ""
+            }
+            
+            // If XPath is provided and CSS selector didn't work, try XPath
+            ${xpath && selector ? `if(!el) {` : ""}
+            ${
+              xpath
+                ? `
+              const xpath = ${JSON.stringify(xpath)};
+              const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+              el = xpathResult.singleNodeValue;
+            `
+                : ""
+            }
+            ${xpath && selector ? `}` : ""}
+            
+            // Try finding by accessibility attributes if neither worked
+            if (!el) {
+              // Find by aria-label, innerText, or other accessibility attributes
+              const potentialElements = Array.from(document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"]'));
+              el = potentialElements.find(e => 
+                (e.getAttribute('aria-label') && e.getAttribute('aria-label').toLowerCase().includes(${JSON.stringify(
+                  (selector || "").toLowerCase()
+                )})) ||
+                (e.innerText && e.innerText.toLowerCase().includes(${JSON.stringify(
+                  (selector || "").toLowerCase()
+                )})) ||
+                (e.textContent && e.textContent.toLowerCase().includes(${JSON.stringify(
+                  (selector || "").toLowerCase()
+                )}))
+              );
+            }
+            
+            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
+              selector || xpath || "No selector provided"
             )});
             el.click();
             return true;
@@ -101,9 +139,46 @@ class PlanExecutor {
       case "type":
         await this.webview.executeJavaScript(`
           (() => {
-            const el = document.querySelector(${JSON.stringify(selector)});
-            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
+            let el;
+            // Try CSS selector first
+            ${
               selector
+                ? `el = document.querySelector(${JSON.stringify(selector)});`
+                : ""
+            }
+            
+            // If XPath is provided and CSS selector didn't work, try XPath
+            ${xpath && selector ? `if(!el) {` : ""}
+            ${
+              xpath
+                ? `
+              const xpath = ${JSON.stringify(xpath)};
+              const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+              el = xpathResult.singleNodeValue;
+            `
+                : ""
+            }
+            ${xpath && selector ? `}` : ""}
+            
+            // Try finding by accessibility attributes if neither worked
+            if (!el) {
+              // Find inputs by placeholder, name, label, etc.
+              const potentialInputs = Array.from(document.querySelectorAll('input, textarea, [role="textbox"], [contenteditable="true"]'));
+              el = potentialInputs.find(e => 
+                (e.getAttribute('placeholder') && e.getAttribute('placeholder').toLowerCase().includes(${JSON.stringify(
+                  (selector || "").toLowerCase()
+                )})) ||
+                (e.getAttribute('name') && e.getAttribute('name').toLowerCase().includes(${JSON.stringify(
+                  (selector || "").toLowerCase()
+                )})) ||
+                (e.getAttribute('aria-label') && e.getAttribute('aria-label').toLowerCase().includes(${JSON.stringify(
+                  (selector || "").toLowerCase()
+                )}))
+              );
+            }
+            
+            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
+              selector || xpath || "No selector provided"
             )});
             el.focus();
             el.value = ${JSON.stringify(value)};
@@ -116,13 +191,32 @@ class PlanExecutor {
       case "scroll":
         await this.webview.executeJavaScript(`
           (() => {
-            const el = ${
-              step.selector
-                ? `document.querySelector(${JSON.stringify(selector)})`
-                : "document.scrollingElement"
-            };
-            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
+            let el;
+            // Try CSS selector first
+            ${
               selector
+                ? `el = document.querySelector(${JSON.stringify(selector)});`
+                : ""
+            }
+            
+            // If XPath is provided and CSS selector didn't work, try XPath
+            ${xpath && selector ? `if(!el) {` : ""}
+            ${
+              xpath
+                ? `
+              const xpath = ${JSON.stringify(xpath)};
+              const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+              el = xpathResult.singleNodeValue;
+            `
+                : ""
+            }
+            ${xpath && selector ? `}` : ""}
+            
+            // If no element found, use document.scrollingElement
+            el = el || document.scrollingElement;
+            
+            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
+              selector || xpath || "No selector provided"
             )});
             el.scrollBy(0, ${value});
             return true;

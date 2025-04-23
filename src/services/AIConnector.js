@@ -20,27 +20,106 @@ class AIConnector {
         (function() {
           try {
             const doc = document;
+            
+            // Function to extract accessibility information from an element
+            function getA11yInfo(el) {
+              if (!el) return null;
+              
+              return {
+                role: el.getAttribute('role') || el.tagName.toLowerCase(),
+                label: el.getAttribute('aria-label') || el.innerText || el.textContent || el.getAttribute('alt') || el.getAttribute('title') || '',
+                name: el.getAttribute('name') || el.id || '',
+                disabled: el.getAttribute('aria-disabled') === 'true' || el.disabled || false,
+                pressed: el.getAttribute('aria-pressed') || null,
+                expanded: el.getAttribute('aria-expanded') || null,
+                checked: el.getAttribute('aria-checked') || (el.tagName === 'INPUT' && el.type === 'checkbox' ? el.checked : null),
+                hidden: el.getAttribute('aria-hidden') === 'true' || getComputedStyle(el).display === 'none' || getComputedStyle(el).visibility === 'hidden',
+                required: el.required || el.getAttribute('aria-required') === 'true' || false
+              };
+            }
+            
+            // Build a simplified a11y tree - get interactive elements
+            const getInteractiveElements = () => {
+              const interactiveSelectors = [
+                'a[href]', 'button', 'input', 'textarea', 'select', 
+                '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+                '[role="tab"]', '[role="menuitem"]', '[role="combobox"]', '[role="listbox"]',
+                '[role="option"]', '[role="switch"]', '[role="searchbox"]', '[role="textbox"]',
+                '[tabindex]:not([tabindex="-1"])'
+              ].join(',');
+              
+              return Array.from(doc.querySelectorAll(interactiveSelectors) || [])
+                .filter(el => {
+                  // Filter out hidden elements
+                  return !(el.getAttribute('aria-hidden') === 'true' || 
+                         getComputedStyle(el).display === 'none' || 
+                         getComputedStyle(el).visibility === 'hidden');
+                })
+                .map(el => {
+                  const id = el.id ? '#' + el.id : '';
+                  const classes = el.className ? '.' + el.className.replace(/\\s+/g, '.') : '';
+                  return {
+                    a11y: getA11yInfo(el),
+                    selector: id || el.tagName.toLowerCase() + classes,
+                    xpath: getXPath(el)
+                  };
+                }).slice(0, 50); // Limit to 50 elements to prevent too much data
+            };
+            
+            // Function to get XPath for an element
+            function getXPath(element) {
+              if (!element) return '';
+              if (element.id) return \`//*[@id="\${element.id}"]\`;
+              
+              let path = '';
+              while (element && element.nodeType === Node.ELEMENT_NODE) {
+                let sibling = element;
+                let siblings = [];
+                
+                while (sibling.previousSibling) {
+                  const prev = sibling.previousSibling;
+                  if (prev.nodeType === Node.ELEMENT_NODE && prev.tagName === element.tagName) {
+                    siblings.push(prev);
+                  }
+                  sibling = prev;
+                }
+                
+                const position = siblings.length > 0 ? siblings.length + 1 : 1;
+                const tagName = element.tagName.toLowerCase();
+                path = \`/\${tagName}[\${position}]\${path ? '/' + path : ''}\`;
+                
+                element = element.parentNode;
+              }
+              
+              return \`/\${path}\`;
+            }
+            
             return {
               html: doc.documentElement.outerHTML,
               text: doc.body ? doc.body.innerText.substring(0, 5000) : "",
+              a11yTree: getInteractiveElements(),
               links: Array.from(doc.links || []).map(link => ({
                 text: link.innerText || link.textContent || "",
-                href: link.href || ""
+                href: link.href || "",
+                a11y: getA11yInfo(link)
               })).slice(0, 50),
               inputs: Array.from(doc.querySelectorAll('input, textarea') || []).map(input => ({
                 type: input.type || "text",
                 id: input.id || "",
                 name: input.name || "",
-                placeholder: input.placeholder || ""
+                placeholder: input.placeholder || "",
+                a11y: getA11yInfo(input)
               })),
               headings: Array.from(doc.querySelectorAll('h1, h2, h3') || []).map(h => ({
                 level: h.tagName.toLowerCase(),
-                text: h.innerText || h.textContent || ""
+                text: h.innerText || h.textContent || "",
+                a11y: getA11yInfo(h)
               })).slice(0, 20),
               buttons: Array.from(doc.querySelectorAll('button') || []).map(btn => ({
                 text: btn.innerText || btn.textContent || "",
                 id: btn.id || "",
-                disabled: btn.disabled || false
+                disabled: btn.disabled || false,
+                a11y: getA11yInfo(btn)
               })).slice(0, 20)
             };
           } catch (err) {
@@ -48,6 +127,7 @@ class AIConnector {
             return {
               html: "",
               text: "Error extracting page content: " + err.message,
+              a11yTree: [],
               links: [],
               inputs: [],
               headings: [],
@@ -84,9 +164,11 @@ Allowed actions:
 - type: requires selector and value parameters
 - scroll: requires value parameter (number of pixels)
 
-For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed.
+For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed. For accessibility, also consider using XPath selectors when appropriate.
 
-IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.`;
+IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.
+
+For better accessibility-based selection, use the a11yTree information provided to identify elements by their accessibility properties like role, label, and name. This information is more reliable for finding the right elements, especially when visual elements don't have clear IDs or classes.`;
 
       // If we don't have page info, create a simple navigation action
       if (!pageSnapshot.url && command.toLowerCase().includes("go to")) {
@@ -105,6 +187,7 @@ IMPORTANT: Only return a SINGLE action step that can be executed immediately, no
       const pageContext = {
         url: pageSnapshot.url || "about:blank",
         title: pageSnapshot.title || "",
+        a11yTree: pageContent.a11yTree || [],
         availableInputs: pageContent.inputs || [],
         availableLinks: pageContent.links || [],
         headings: pageContent.headings || [],
@@ -133,14 +216,14 @@ IMPORTANT: Only return a SINGLE action step that can be executed immediately, no
       console.log("Page context URL:", pageContext.url);
 
       const chat = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4.1",
         messages: [
           { role: "system", content: systemPrompt },
           {
             role: "user",
             content: `Command: ${command}\n\nCurrent page: ${JSON.stringify(
               pageContext
-            )}\n\n${pageText}`,
+            )}\n\n${pageText}\n\nPlease analyze the accessibility tree (a11yTree) to find the most appropriate elements to interact with.`,
           },
         ],
         max_tokens: 500,
