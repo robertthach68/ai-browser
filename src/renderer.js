@@ -45,23 +45,48 @@ class App {
       this.statusSpan.innerText = "Planning...";
 
       try {
+        console.log("Sending command to main process:", command);
         const resp = await window.aiBrowser.executeCommand(command);
+        console.log("Received response from main process:", resp);
+
         if (resp.status !== "ok") {
           throw new Error(resp.error || "Unknown error");
         }
 
+        if (!resp.action) {
+          this.statusSpan.innerText = "No action was returned";
+          console.error("No action received in response:", resp);
+          return;
+        }
+
         const action = resp.action;
+        console.log("Action to execute:", action);
         this.statusSpan.innerText = `Ready to execute: ${action.action}`;
 
-        const runAI = confirm("Execute AI action? Cancel to skip.");
+        const runAI = confirm(
+          `Execute AI action: "${action.action}"${
+            action.selector ? ` on "${action.selector}"` : ""
+          }${action.value ? ` with value "${action.value}"` : ""}${
+            action.url ? ` to "${action.url}"` : ""
+          }? Cancel to skip.`
+        );
         if (runAI) {
-          await this.planExecutor.executePlan(action);
-          this.statusSpan.innerText = "Action completed. Enter next command.";
+          console.log("User confirmed execution of action:", action);
+          try {
+            await this.planExecutor.executePlan(action);
+            console.log("Action executed successfully");
+            this.statusSpan.innerText = "Action completed. Enter next command.";
+          } catch (execError) {
+            console.error("Error executing action:", execError);
+            this.statusSpan.innerText =
+              "Action execution failed: " + execError.message;
+          }
         } else {
+          console.log("User skipped execution of action:", action);
           this.statusSpan.innerText = "Action skipped. Enter next command.";
         }
       } catch (err) {
-        console.error(err);
+        console.error("Error in command execution flow:", err);
         this.statusSpan.innerText = "Error: " + err.message;
       } finally {
         this.commandInput.disabled = false;
@@ -544,43 +569,70 @@ class PlanExecutor {
     this.logger = logger;
   }
 
-  async executePlan(plan) {
-    for (let i = 0; i < plan.length; i++) {
-      const step = plan[i];
-      const { action, selector, value, url } = step;
-
-      this.updateStatus(`Executing ${action} (${i + 1}/${plan.length})`);
-
-      try {
-        await this.executeStep(step);
-
-        this.logger.logAction({
-          action,
-          selector,
-          value,
-          url,
-          status: "success",
-        });
-      } catch (e) {
-        this.logger.logAction({
-          action,
-          selector,
-          value,
-          url,
-          status: "error",
-          error: e.message,
-        });
-
-        this.showFallback(e.message);
-        break;
-      }
+  /**
+   * Execute a single action
+   * @param {Object} action - The action to execute
+   * @returns {Promise<void>}
+   */
+  async executePlan(action) {
+    if (!action) {
+      console.error("No action provided to executePlan");
+      this.updateStatus("No action to execute");
+      return;
     }
 
-    this.updateStatus("Plan execution completed");
+    console.log("Renderer PlanExecutor: executing action", action);
+    const { action: actionType, selector, value, url, xpath } = action;
+
+    this.updateStatus(`Executing ${actionType}`);
+
+    try {
+      await this.executeStep(action);
+      console.log(
+        `Renderer PlanExecutor: action ${actionType} completed successfully`
+      );
+
+      this.logger.logAction({
+        action: actionType,
+        selector,
+        value,
+        url,
+        status: "success",
+      });
+
+      this.updateStatus(`Action ${actionType} completed`);
+    } catch (e) {
+      console.error("Renderer PlanExecutor: error executing action:", e);
+      this.logger.logAction({
+        action: actionType,
+        selector,
+        value,
+        url,
+        status: "error",
+        error: e.message,
+      });
+
+      this.showFallback(e.message);
+    }
   }
 
+  /**
+   * Execute a single step
+   * @param {Object} step - The step to execute
+   * @returns {Promise<void>}
+   */
   async executeStep(step) {
-    const { action, selector, value, url } = step;
+    if (!step || !step.action) {
+      throw new Error("Invalid step: missing action property");
+    }
+
+    const { action, selector, value, url, xpath } = step;
+    console.log(`Renderer PlanExecutor: executing step ${action}`, {
+      selector,
+      value,
+      url,
+      xpath,
+    });
 
     switch (action) {
       case "navigate":
@@ -590,17 +642,29 @@ class PlanExecutor {
             resolve();
           };
 
-          const failHandler = () => {
+          const failHandler = (event) => {
             this.webview.removeEventListener("did-fail-load", failHandler);
-            reject(new Error("Failed to load " + url));
+            reject(
+              new Error(
+                `Failed to load ${url}: ${
+                  event
+                    ? event.errorDescription || "unknown error"
+                    : "unknown error"
+                }`
+              )
+            );
           };
 
           this.webview.addEventListener("did-finish-load", loadHandler);
           this.webview.addEventListener("did-fail-load", failHandler);
 
+          console.log(`Renderer PlanExecutor: navigating to ${url}`);
           this.webview.loadURL(url);
 
           setTimeout(() => {
+            console.log(
+              `Renderer PlanExecutor: navigation timeout for ${url}, resolving anyway`
+            );
             this.webview.removeEventListener("did-finish-load", loadHandler);
             this.webview.removeEventListener("did-fail-load", failHandler);
             resolve();
@@ -609,48 +673,322 @@ class PlanExecutor {
         break;
 
       case "click":
-        await this.webview.executeJavaScript(`
+        console.log(`Renderer PlanExecutor: attempting to click element`, {
+          selector,
+          xpath,
+        });
+        const clickResult = await this.webview.executeJavaScript(`
           (() => {
-            const el = document.querySelector(${JSON.stringify(selector)});
-            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
-              selector
-            )});
-            el.click();
-            return true;
+            try {
+              let el;
+              console.log("Browser: looking for element to click", { selector: ${JSON.stringify(
+                selector
+              )}, xpath: ${JSON.stringify(xpath)} });
+              
+              // Try CSS selector first
+              ${
+                selector
+                  ? `
+                try {
+                  console.log("Browser: trying CSS selector: ${selector}");
+                  el = document.querySelector(${JSON.stringify(selector)});
+                  if (el) console.log("Browser: found element with CSS selector");
+                } catch (e) {
+                  console.error("Browser: error with CSS selector:", e);
+                }
+              `
+                  : ""
+              }
+              
+              // If XPath is provided and CSS selector didn't work, try XPath
+              ${
+                xpath
+                  ? `
+                if (!el) {
+                  try {
+                    console.log("Browser: trying XPath: ${xpath}");
+                    const xpath = ${JSON.stringify(xpath)};
+                    const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    el = xpathResult.singleNodeValue;
+                    if (el) console.log("Browser: found element with XPath");
+                  } catch (e) {
+                    console.error("Browser: error with XPath:", e);
+                  }
+                }
+              `
+                  : ""
+              }
+              
+              // Try finding by accessibility attributes if neither worked
+              if (!el) {
+                console.log("Browser: trying accessibility attributes");
+                try {
+                  // Find by aria-label, innerText, or other accessibility attributes
+                  const potentialElements = Array.from(document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"]'));
+                  console.log("Browser: found " + potentialElements.length + " potential elements");
+                  
+                  const searchText = ${JSON.stringify(
+                    (selector || "").toLowerCase()
+                  )};
+                  el = potentialElements.find(e => {
+                    const ariaLabel = e.getAttribute('aria-label');
+                    const innerText = e.innerText;
+                    const textContent = e.textContent;
+                    
+                    const matched = 
+                      (ariaLabel && ariaLabel.toLowerCase().includes(searchText)) ||
+                      (innerText && innerText.toLowerCase().includes(searchText)) ||
+                      (textContent && textContent.toLowerCase().includes(searchText));
+                      
+                    if (matched) {
+                      console.log("Browser: found element via text match:", { 
+                        element: e.tagName, 
+                        ariaLabel: ariaLabel, 
+                        innerText: innerText && innerText.substring(0, 50),
+                        matched: true 
+                      });
+                    }
+                    return matched;
+                  });
+                } catch (e) {
+                  console.error("Browser: error finding by accessibility:", e);
+                }
+              }
+              
+              if (!el) {
+                console.error("Browser: no element found for clicking");
+                throw new Error('Element not found: ' + ${JSON.stringify(
+                  selector || xpath || "No selector provided"
+                )});
+              }
+              
+              console.log("Browser: clicking element", { 
+                tagName: el.tagName,
+                id: el.id,
+                className: el.className,
+                text: el.innerText ? el.innerText.substring(0, 50) : null
+              });
+              
+              el.click();
+              return { success: true, element: { tagName: el.tagName, id: el.id, className: el.className } };
+            } catch (error) {
+              console.error("Browser: error in click action:", error);
+              return { success: false, error: error.message };
+            }
           })();
         `);
+
+        console.log("Renderer PlanExecutor: click result", clickResult);
+
+        if (!clickResult.success) {
+          throw new Error(`Failed to click element: ${clickResult.error}`);
+        }
         break;
 
       case "type":
-        await this.webview.executeJavaScript(`
+        console.log(`Renderer PlanExecutor: attempting to type text`, {
+          selector,
+          xpath,
+          value,
+        });
+        const typeResult = await this.webview.executeJavaScript(`
           (() => {
-            const el = document.querySelector(${JSON.stringify(selector)});
-            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
-              selector
-            )});
-            el.focus();
-            el.value = ${JSON.stringify(value)};
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            return true;
+            try {
+              let el;
+              console.log("Browser: looking for element to type in", { selector: ${JSON.stringify(
+                selector
+              )}, xpath: ${JSON.stringify(xpath)} });
+              
+              // Try CSS selector first
+              ${
+                selector
+                  ? `
+                try {
+                  console.log("Browser: trying CSS selector: ${selector}");
+                  el = document.querySelector(${JSON.stringify(selector)});
+                  if (el) console.log("Browser: found input element with CSS selector");
+                } catch (e) {
+                  console.error("Browser: error with CSS selector:", e);
+                }
+              `
+                  : ""
+              }
+              
+              // If XPath is provided and CSS selector didn't work, try XPath
+              ${
+                xpath
+                  ? `
+                if (!el) {
+                  try {
+                    console.log("Browser: trying XPath: ${xpath}");
+                    const xpath = ${JSON.stringify(xpath)};
+                    const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    el = xpathResult.singleNodeValue;
+                    if (el) console.log("Browser: found input element with XPath");
+                  } catch (e) {
+                    console.error("Browser: error with XPath:", e);
+                  }
+                }
+              `
+                  : ""
+              }
+              
+              // Try finding by accessibility attributes if neither worked
+              if (!el) {
+                console.log("Browser: trying to find input by accessibility attributes");
+                try {
+                  // Find inputs by placeholder, name, label, etc.
+                  const potentialInputs = Array.from(document.querySelectorAll('input, textarea, [role="textbox"], [contenteditable="true"]'));
+                  console.log("Browser: found " + potentialInputs.length + " potential input elements");
+                  
+                  const searchText = ${JSON.stringify(
+                    (selector || "").toLowerCase()
+                  )};
+                  el = potentialInputs.find(e => {
+                    const placeholder = e.getAttribute('placeholder');
+                    const name = e.getAttribute('name');
+                    const ariaLabel = e.getAttribute('aria-label');
+                    
+                    const matched = 
+                      (placeholder && placeholder.toLowerCase().includes(searchText)) ||
+                      (name && name.toLowerCase().includes(searchText)) ||
+                      (ariaLabel && ariaLabel.toLowerCase().includes(searchText));
+                      
+                    if (matched) {
+                      console.log("Browser: found input element via attribute match:", { 
+                        element: e.tagName, 
+                        type: e.type,
+                        placeholder: placeholder,
+                        name: name,
+                        ariaLabel: ariaLabel,
+                        matched: true 
+                      });
+                    }
+                    return matched;
+                  });
+                } catch (e) {
+                  console.error("Browser: error finding input by accessibility:", e);
+                }
+              }
+              
+              if (!el) {
+                console.error("Browser: no input element found for typing");
+                throw new Error('Input element not found: ' + ${JSON.stringify(
+                  selector || xpath || "No selector provided"
+                )});
+              }
+              
+              console.log("Browser: typing into element", { 
+                tagName: el.tagName,
+                id: el.id,
+                type: el.type,
+                name: el.name,
+                value: ${JSON.stringify(value)}
+              });
+              
+              el.focus();
+              el.value = ${JSON.stringify(value)};
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              try {
+                // Also trigger change event for good measure
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } catch(e) {
+                console.warn("Browser: couldn't dispatch change event", e);
+              }
+              return { success: true, element: { tagName: el.tagName, id: el.id, type: el.type } };
+            } catch (error) {
+              console.error("Browser: error in type action:", error);
+              return { success: false, error: error.message };
+            }
           })();
         `);
+
+        console.log("Renderer PlanExecutor: type result", typeResult);
+
+        if (!typeResult.success) {
+          throw new Error(`Failed to type into element: ${typeResult.error}`);
+        }
         break;
 
       case "scroll":
-        await this.webview.executeJavaScript(`
+        console.log(`Renderer PlanExecutor: attempting to scroll`, {
+          selector,
+          xpath,
+          value,
+        });
+        const scrollResult = await this.webview.executeJavaScript(`
           (() => {
-            const el = ${
-              step.selector
-                ? `document.querySelector(${JSON.stringify(selector)})`
-                : "document.scrollingElement"
-            };
-            if (!el) throw new Error('Element not found: ' + ${JSON.stringify(
-              selector
-            )});
-            el.scrollBy(0, ${value});
-            return true;
+            try {
+              let el;
+              console.log("Browser: looking for element to scroll", { selector: ${JSON.stringify(
+                selector
+              )}, xpath: ${JSON.stringify(xpath)} });
+              
+              // Try CSS selector first
+              ${
+                selector
+                  ? `
+                try {
+                  console.log("Browser: trying CSS selector: ${selector}");
+                  el = document.querySelector(${JSON.stringify(selector)});
+                  if (el) console.log("Browser: found scrollable element with CSS selector");
+                } catch (e) {
+                  console.error("Browser: error with CSS selector:", e);
+                }
+              `
+                  : ""
+              }
+              
+              // If XPath is provided and CSS selector didn't work, try XPath
+              ${
+                xpath
+                  ? `
+                if (!el) {
+                  try {
+                    console.log("Browser: trying XPath: ${xpath}");
+                    const xpath = ${JSON.stringify(xpath)};
+                    const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    el = xpathResult.singleNodeValue;
+                    if (el) console.log("Browser: found scrollable element with XPath");
+                  } catch (e) {
+                    console.error("Browser: error with XPath:", e);
+                  }
+                }
+              `
+                  : ""
+              }
+              
+              // If no element found, use document.scrollingElement
+              if (!el) {
+                console.log("Browser: using document.scrollingElement for scrolling");
+                el = document.scrollingElement;
+              }
+              
+              if (!el) {
+                console.error("Browser: no scrollable element found");
+                throw new Error('Scrollable element not found');
+              }
+              
+              console.log("Browser: scrolling element", { 
+                tagName: el.tagName,
+                id: el.id,
+                scrollAmount: ${value}
+              });
+              
+              el.scrollBy(0, ${value});
+              return { success: true };
+            } catch (error) {
+              console.error("Browser: error in scroll action:", error);
+              return { success: false, error: error.message };
+            }
           })();
         `);
+
+        console.log("Renderer PlanExecutor: scroll result", scrollResult);
+
+        if (!scrollResult.success) {
+          throw new Error(`Failed to scroll: ${scrollResult.error}`);
+        }
         break;
 
       default:
