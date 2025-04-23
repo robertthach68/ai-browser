@@ -6,43 +6,49 @@ class PlanExecutor {
   }
 
   /**
-   * Execute a plan step by step
-   * @param {Array} plan - The plan to execute
+   * Execute a single action step
+   * @param {Object} action - The action to execute
    * @returns {Promise<void>}
    */
-  async executePlan(plan) {
-    for (let i = 0; i < plan.length; i++) {
-      const step = plan[i];
-      const { action, selector, value, url } = step;
-
-      this.updateStatus(`Executing ${action} (${i + 1}/${plan.length})`);
-
-      try {
-        await this.executeStep(step);
-
-        this.logger.logAction({
-          action,
-          selector,
-          value,
-          url,
-          status: "success",
-        });
-      } catch (e) {
-        this.logger.logAction({
-          action,
-          selector,
-          value,
-          url,
-          status: "error",
-          error: e.message,
-        });
-
-        this.showFallback(e.message);
-        break;
-      }
+  async executePlan(action) {
+    // For backward compatibility, if we receive an array, just take the first item
+    if (Array.isArray(action) && action.length > 0) {
+      action = action[0];
     }
 
-    this.updateStatus("Plan execution completed");
+    if (!action || !action.action) {
+      this.updateStatus("No valid action to execute");
+      return;
+    }
+
+    const { action: actionType, selector, value, url } = action;
+
+    this.updateStatus(`Executing ${actionType}`);
+
+    try {
+      await this.executeStep(action);
+
+      this.logger.logAction({
+        action: actionType,
+        selector,
+        value,
+        url,
+        status: "success",
+      });
+
+      this.updateStatus(`Action ${actionType} completed`);
+    } catch (e) {
+      this.logger.logAction({
+        action: actionType,
+        selector,
+        value,
+        url,
+        status: "error",
+        error: e.message,
+      });
+
+      this.showFallback(e.message);
+    }
   }
 
   /**

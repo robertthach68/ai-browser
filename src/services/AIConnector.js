@@ -69,14 +69,14 @@ class AIConnector {
   }
 
   /**
-   * Generate a plan based on a command and page snapshot
+   * Generate a single action based on a command and page snapshot
    * @param {string} command - The user command
    * @param {Object} pageSnapshot - The captured page data
-   * @returns {Promise<Array>} The action plan in JSON format
+   * @returns {Promise<Object>} A single action step
    */
   async generatePlan(command, pageSnapshot = {}) {
     try {
-      const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a JSON array of steps. Each step has 'action', 'selector', and optional 'value' or 'url'. 
+      const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a SINGLE action step in JSON format. The step should have 'action', 'selector', and optional 'value' or 'url'.
 
 Allowed actions:
 - navigate: requires url parameter
@@ -84,18 +84,18 @@ Allowed actions:
 - type: requires selector and value parameters
 - scroll: requires value parameter (number of pixels)
 
-For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed.`;
+For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed.
 
-      // If we don't have page info, create a simple navigation plan
+IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.`;
+
+      // If we don't have page info, create a simple navigation action
       if (!pageSnapshot.url && command.toLowerCase().includes("go to")) {
         const targetUrl = this.extractUrlFromCommand(command);
-        console.log(`Creating a simple navigation plan to ${targetUrl}`);
-        return [
-          {
-            action: "navigate",
-            url: targetUrl,
-          },
-        ];
+        console.log(`Creating a simple navigation step to ${targetUrl}`);
+        return {
+          action: "navigate",
+          url: targetUrl,
+        };
       }
 
       // Create a concise representation of the page with defensive programming
@@ -154,29 +154,55 @@ For selectors, use the most specific and reliable CSS selector. Prefer using IDs
         // Parse the JSON response
         const parsedResponse = JSON.parse(responseContent);
 
-        // Check if we got a steps array, or if it's nested inside a property
-        const steps = Array.isArray(parsedResponse)
-          ? parsedResponse
-          : parsedResponse.steps ||
-            parsedResponse.actions ||
-            parsedResponse.plan ||
-            [];
-
-        if (steps.length === 0) {
-          throw new Error("No steps found in AI response");
+        // If we got a single action object, return it directly
+        if (
+          parsedResponse.action &&
+          typeof parsedResponse.action === "string"
+        ) {
+          return parsedResponse;
         }
 
-        return steps;
+        // If we got a steps array, just return the first item
+        if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
+          return parsedResponse[0];
+        }
+
+        // Handle the case where action is nested inside a property
+        if (
+          parsedResponse.steps &&
+          Array.isArray(parsedResponse.steps) &&
+          parsedResponse.steps.length > 0
+        ) {
+          return parsedResponse.steps[0];
+        }
+
+        if (
+          parsedResponse.actions &&
+          Array.isArray(parsedResponse.actions) &&
+          parsedResponse.actions.length > 0
+        ) {
+          return parsedResponse.actions[0];
+        }
+
+        if (
+          parsedResponse.plan &&
+          Array.isArray(parsedResponse.plan) &&
+          parsedResponse.plan.length > 0
+        ) {
+          return parsedResponse.plan[0];
+        }
+
+        throw new Error("No valid action found in AI response");
       } catch (err) {
         throw new Error(
-          "Failed to parse plan JSON: " +
+          "Failed to parse action JSON: " +
             err.message +
             ". Content: " +
             responseContent
         );
       }
     } catch (error) {
-      console.error("Error generating plan:", error);
+      console.error("Error generating action:", error);
       throw error;
     }
   }

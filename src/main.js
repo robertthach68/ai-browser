@@ -77,25 +77,26 @@ function setupIpcHandlers() {
       console.log("Received command from renderer:", command);
 
       // Create a promise to get the page data
-      let plan;
+      let action;
+      let pageData = {};
 
       // Simple direct handling for navigation commands
       if (command.toLowerCase().includes("go to")) {
-        plan = await aiConnector.generatePlan(command, {});
+        action = await aiConnector.generatePlan(command, {});
       } else {
         // For more complex commands, we need page data
         try {
-          const pageData = await getPageSnapshot(event.sender.id);
+          pageData = await getPageSnapshot(event.sender.id);
           console.log("Page data:", pageData);
-          plan = await aiConnector.generatePlan(command, pageData);
+          action = await aiConnector.generatePlan(command, pageData);
         } catch (error) {
           console.log("Could not get page data, using fallback:", error);
-          plan = await aiConnector.generatePlan(command, {});
+          action = await aiConnector.generatePlan(command, {});
         }
       }
 
-      event.sender.send("plan-update", plan);
-      return { status: "ok", plan };
+      event.sender.send("plan-update", action);
+      return { status: "ok", action, command, pageSnapshot: pageData };
     } catch (err) {
       console.error("Error executing command:", err);
       return { status: "error", error: err.message };

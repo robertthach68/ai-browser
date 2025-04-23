@@ -50,15 +50,15 @@ class App {
           throw new Error(resp.error || "Unknown error");
         }
 
-        const plan = resp.plan;
-        this.statusSpan.innerText = "Plan ready";
+        const action = resp.action;
+        this.statusSpan.innerText = `Ready to execute: ${action.action}`;
 
-        const runAI = confirm("Run AI actions? Cancel to manual.");
+        const runAI = confirm("Execute AI action? Cancel to skip.");
         if (runAI) {
-          await this.planExecutor.executePlan(plan);
-          this.statusSpan.innerText = "Done";
+          await this.planExecutor.executePlan(action);
+          this.statusSpan.innerText = "Action completed. Enter next command.";
         } else {
-          this.statusSpan.innerText = "Manual mode";
+          this.statusSpan.innerText = "Action skipped. Enter next command.";
         }
       } catch (err) {
         console.error(err);
