@@ -1,4 +1,6 @@
 const OpenAI = require("openai");
+const fs = require("fs");
+const path = require("path");
 
 class AIConnector {
   constructor(apiKey) {
@@ -108,6 +110,19 @@ For selectors, use the most specific and reliable CSS selector. Prefer using IDs
         headings: pageContent.headings || [],
         buttons: pageContent.buttons || [],
       };
+
+      // Save pageContext to a file for manual verification
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const logsDir = path.join(__dirname, "../../logs");
+
+      // Create logs directory if it doesn't exist
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
+
+      const filename = path.join(logsDir, `pageContext-${timestamp}.json`);
+      fs.writeFileSync(filename, JSON.stringify(pageContext, null, 2));
+      console.log(`Saved pageContext to ${filename}`);
 
       // Add first 500 chars of page text for context
       const pageText = pageContent.text
