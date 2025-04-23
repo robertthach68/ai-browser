@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld("aiBrowser", {
   // File operations
   saveFile: (filename, data) => ipcRenderer.invoke("save-file", filename, data),
 
+  // Accessibility features
+  explainPage: () => ipcRenderer.invoke("explain-page"),
+
   // Logging
   logAction: (record) => ipcRenderer.send("log-action", record),
 

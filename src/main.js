@@ -5,12 +5,14 @@ const fs = require("fs");
 
 // Import our classes
 const AIConnector = require("./services/AIConnector");
+const AIPageReader = require("./services/AIPageReader");
 const Logger = require("./utils/Logger");
 const AppMenu = require("./components/AppMenu");
 
 // Global variables
 let mainWindow;
 let aiConnector;
+let aiPageReader;
 let logger;
 let pendingPageSnapshotPromises = {};
 
@@ -43,6 +45,7 @@ function createWindow() {
 function initialize() {
   // Create our service instances
   aiConnector = new AIConnector(process.env.OPENAI_API_KEY);
+  aiPageReader = new AIPageReader(process.env.OPENAI_API_KEY);
   logger = new Logger();
 
   // Set up IPC handlers
@@ -148,6 +151,32 @@ function setupIpcHandlers() {
       };
     } catch (error) {
       console.error("Error saving file:", error);
+      return {
+        status: "error",
+        error: error.message,
+      };
+    }
+  });
+
+  // Handle explain page request
+  ipcMain.handle("explain-page", async (event) => {
+    try {
+      console.log("Received explain page request");
+
+      // Fetch the current page snapshot
+      const pageData = await getPageSnapshot(event.sender.id);
+
+      // Generate explanation using AIPageReader
+      const explanation = await aiPageReader.explainPage(pageData);
+
+      console.log("Generated page explanation successfully");
+
+      return {
+        status: "ok",
+        explanation,
+      };
+    } catch (error) {
+      console.error("Error explaining page:", error);
       return {
         status: "error",
         error: error.message,

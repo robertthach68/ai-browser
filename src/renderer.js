@@ -225,6 +225,34 @@ class App {
       });
     });
 
+    // Explain Page button click
+    const explainBtn = document.getElementById("explain-btn");
+    if (explainBtn) {
+      explainBtn.addEventListener("click", async () => {
+        this.statusSpan.innerText = "Generating page explanation...";
+        explainBtn.disabled = true;
+
+        try {
+          const explanation = await window.aiBrowser.explainPage();
+          console.log("Received page explanation:", explanation);
+
+          if (explanation.status === "ok" && explanation.explanation) {
+            this.showExplanationPopup(explanation.explanation);
+            this.statusSpan.innerText = "Page explanation generated.";
+          } else {
+            throw new Error(
+              explanation.error || "Failed to generate explanation"
+            );
+          }
+        } catch (err) {
+          console.error("Error generating page explanation:", err);
+          this.statusSpan.innerText = "Error: " + err.message;
+        } finally {
+          explainBtn.disabled = false;
+        }
+      });
+    }
+
     // Execute button click
     this.executeBtn.addEventListener("click", async () => {
       const command = this.commandInput.value.trim();
@@ -424,6 +452,109 @@ class App {
    */
   logAction(record) {
     window.aiBrowser.logAction(record);
+  }
+
+  /**
+   * Show a popup with the page explanation
+   * @param {Object} explanation - The page explanation data
+   */
+  showExplanationPopup(explanation) {
+    // Remove any existing explanation overlay
+    const existingOverlay = document.querySelector(".explanation-overlay");
+    if (existingOverlay) {
+      document.body.removeChild(existingOverlay);
+    }
+
+    // Create overlay and dialog elements
+    const overlay = document.createElement("div");
+    overlay.className = "explanation-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "explanation-dialog";
+
+    // Create header with title and close button
+    const header = document.createElement("div");
+    header.className = "explanation-header";
+
+    const title = document.createElement("h2");
+    title.textContent = "Page Explanation";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", () => {
+      document.body.removeChild(overlay);
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // Create content container
+    const content = document.createElement("div");
+    content.className = "explanation-content";
+
+    // Add summary section
+    const summarySection = document.createElement("div");
+    summarySection.className = "explanation-section";
+
+    const summaryTitle = document.createElement("h3");
+    summaryTitle.textContent = "Summary";
+
+    const summaryText = document.createElement("p");
+    summaryText.textContent = explanation.summary;
+
+    summarySection.appendChild(summaryTitle);
+    summarySection.appendChild(summaryText);
+    content.appendChild(summarySection);
+
+    // Add content details section if available
+    if (explanation.contentDetails) {
+      const contentSection = document.createElement("div");
+      contentSection.className = "explanation-section";
+
+      const contentTitle = document.createElement("h3");
+      contentTitle.textContent = "Content on this Page";
+      contentSection.appendChild(contentTitle);
+
+      const contentText = document.createElement("p");
+      contentText.textContent = explanation.contentDetails;
+      contentSection.appendChild(contentText);
+
+      content.appendChild(contentSection);
+    }
+
+    // Add suggested actions if available
+    if (
+      explanation.suggestedActions &&
+      explanation.suggestedActions.length > 0
+    ) {
+      const actionsSection = document.createElement("div");
+      actionsSection.className = "explanation-actions";
+
+      const actionsTitle = document.createElement("h3");
+      actionsTitle.textContent = "Suggested Actions";
+      actionsSection.appendChild(actionsTitle);
+
+      explanation.suggestedActions.forEach((action) => {
+        const actionBtn = document.createElement("button");
+        actionBtn.className = "suggested-action";
+        actionBtn.textContent = action;
+        actionBtn.addEventListener("click", () => {
+          this.commandInput.value = action;
+          document.body.removeChild(overlay);
+        });
+        actionsSection.appendChild(actionBtn);
+      });
+
+      content.appendChild(actionsSection);
+    }
+
+    // Assemble dialog and overlay
+    dialog.appendChild(header);
+    dialog.appendChild(content);
+    overlay.appendChild(dialog);
+
+    // Add to document and show
+    document.body.appendChild(overlay);
   }
 }
 
