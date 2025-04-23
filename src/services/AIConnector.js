@@ -21,6 +21,20 @@ Allowed actions:
 - navigate: requires url parameter
 - click: requires selector parameter 
 - type: requires selector and value parameters
+- scroll: requires value parameter (positive for down, negative for up)
+
+COMMAND INTERPRETATION RULES:
+1. When the command starts with "click" followed by text (e.g., "click sign in" or "click cry your heart out"), this ALWAYS means the user wants to click on an element containing that text, NOT search for it.
+2. On YouTube specifically, "click [video title]" means finding and clicking on a video thumbnail or title that matches the text.
+3. NEVER convert a "click [text]" command into a search operation unless explicitly instructed to search.
+4. When the command starts with "search for" or explicitly mentions searching, generate a "type" action for search inputs.
+5. Navigation commands (e.g., "go to youtube") should generate a "navigate" action.
+6. Only use "type" action when the user explicitly wants to input text into a field, not when they want to find and click on content.
+
+ELEMENT SELECTION PRIORITY:
+1. First try to find elements with exact text matches in their innerText, textContent, title, aria-label, or alt attributes
+2. Next, try to find elements containing partial text matches
+3. For videos on YouTube, look for title elements, video thumbnails, or link elements
 
 For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed. For accessibility, also consider using XPath selectors when appropriate.
 
@@ -44,12 +58,79 @@ IMPORTANT: Only return a SINGLE action step that can be executed immediately, no
       const pageContext = {
         url: pageSnapshot.url || "about:blank",
         title: pageSnapshot.title || "",
-        a11yTree: pageContent.a11yTree || [],
-        availableInputs: pageContent.inputs || [],
-        availableLinks: pageContent.links || [],
-        headings: pageContent.headings || [],
-        buttons: pageContent.buttons || [],
       };
+
+      // Include more detailed page structure information for better context
+      if (pageSnapshot.elements) {
+        // Check if we're on YouTube to add special handling
+        const isYouTube = pageContext.url.includes("youtube.com");
+
+        // Structure elements by type for easier reference
+        pageContext.clickableElements = pageSnapshot.elements
+          .filter((el) =>
+            ["a", "button", "input", "div", "span", "img"].includes(el.tag)
+          )
+          .map((el) => {
+            // Basic element properties
+            const elementInfo = {
+              tag: el.tag,
+              text: el.text || "",
+              id: el.id,
+              classes: el.classes,
+              selector: el.selector,
+              ariaLabel: el.ariaLabel,
+              type: el.type,
+            };
+
+            // Add special handling for YouTube videos
+            if (isYouTube) {
+              // Check if this element is likely a video title/thumbnail
+              const isVideoElement =
+                (el.classes &&
+                  (el.classes.some(
+                    (c) =>
+                      c.includes("video") ||
+                      c.includes("title") ||
+                      c.includes("thumbnail")
+                  ) ||
+                    (el.text && el.tag === "a"))) ||
+                (el.ariaLabel &&
+                  (el.ariaLabel.includes("video") ||
+                    el.ariaLabel.includes("watch")));
+
+              if (isVideoElement) {
+                elementInfo.isVideoElement = true;
+              }
+            }
+
+            return elementInfo;
+          })
+          .slice(0, 30); // Increase limit to capture more elements
+
+        // Add specific section for headings and form elements
+        pageContext.headings = pageSnapshot.headings || [];
+        pageContext.formElements = pageSnapshot.elements
+          .filter(
+            (el) =>
+              el.tag === "input" || el.tag === "textarea" || el.tag === "select"
+          )
+          .map((el) => ({
+            tag: el.tag,
+            type: el.type || "",
+            id: el.id,
+            name: el.name,
+            placeholder: el.placeholder,
+            selector: el.selector,
+          }))
+          .slice(0, 10);
+      } else {
+        // Fallback to old format if necessary
+        pageContext.a11yTree = pageContent.a11yTree || [];
+        pageContext.availableInputs = pageContent.inputs || [];
+        pageContext.availableLinks = pageContent.links || [];
+        pageContext.headings = pageContent.headings || [];
+        pageContext.buttons = pageContent.buttons || [];
+      }
 
       // Add first 500 chars of page text for context
       const pageText = pageContent.text
@@ -62,12 +143,45 @@ IMPORTANT: Only return a SINGLE action step that can be executed immediately, no
       const chat = await this.openai.chat.completions.create({
         model: "gpt-4.1",
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "developer", content: systemPrompt },
           {
             role: "user",
-            content: `Command: ${command}\n\nCurrent page: ${JSON.stringify(
-              pageContext
-            )}\n\n${pageText}\n\nPlease analyze the accessibility tree (a11yTree) to find the most appropriate elements to interact with.`,
+            content: `Command: ${command}
+
+Current page: ${JSON.stringify(pageContext, null, 2)}
+
+${pageText}
+
+Processing Instructions:
+1. For ALL "click" commands:
+   - This is ALWAYS a request to find and click on an element containing the specified text
+   - NEVER convert a "click [text]" into a search action unless explicitly told to search
+   - Look for elements where the text matches in: text content, aria-label, title, or alt attributes
+
+2. For YouTube specific handling:
+   - If on YouTube and command is "click [video title]", look for elements marked as isVideoElement=true
+   - For video titles, prefer elements that are links (<a> tags) with matching text
+   - Consider video thumbnails and video titles as valid targets
+
+3. Element selection priority:
+   - First: Exact text matches
+   - Second: Partial text matches beginning with the search text
+   - Third: Any element containing part of the search text
+   - Only use search input as a last resort if NO matching elements can be found
+
+Command analysis:
+${
+  command.toLowerCase().startsWith("click")
+    ? `- This is a CLICK command. The user wants to click on an element matching: "${command
+        .replace("click", "")
+        .trim()}"
+  - DO NOT convert this to a search action - find and click the matching element`
+    : `- Command type: ${
+        command.toLowerCase().includes("search") ? "SEARCH" : "OTHER"
+      }`
+}
+
+Please return a single action in JSON format that best accomplishes this command on the current page.`,
           },
         ],
         max_tokens: 500,
