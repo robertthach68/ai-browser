@@ -28,10 +28,26 @@ class PageContentExtractor {
       const content = await this.executeContentExtraction();
 
       console.log("Successfully captured page content");
-      return { url, title, content };
+      return {
+        url,
+        title,
+        viewport: content.viewport,
+        headings: content.headings,
+        elements: content.elements,
+        forms: content.forms,
+        history: content.history || [], // Default to empty array if not provided
+      };
     } catch (error) {
       console.error("Error capturing page snapshot:", error);
-      return { url: "", title: "", content: {} };
+      return {
+        url: "",
+        title: "",
+        viewport: { width: 0, height: 0 },
+        headings: [],
+        elements: [],
+        forms: [],
+        history: [],
+      };
     }
   }
 
@@ -45,117 +61,128 @@ class PageContentExtractor {
         try {
           const doc = document;
           
-          // Function to extract accessibility information from an element
-          function getA11yInfo(el) {
-            if (!el) return null;
+          // Generate a unique selector for an element
+          function generateSelector(el) {
+            if (!el || el === document || el === document.documentElement) return '';
+            if (el.id) return '#' + el.id;
             
-            return {
-              role: el.getAttribute('role') || el.tagName.toLowerCase(),
-              label: el.getAttribute('aria-label') || el.innerText || el.textContent || el.getAttribute('alt') || el.getAttribute('title') || '',
-              name: el.getAttribute('name') || el.id || '',
-              disabled: el.getAttribute('aria-disabled') === 'true' || el.disabled || false,
-              pressed: el.getAttribute('aria-pressed') || null,
-              expanded: el.getAttribute('aria-expanded') || null,
-              checked: el.getAttribute('aria-checked') || (el.tagName === 'INPUT' && el.type === 'checkbox' ? el.checked : null),
-              hidden: el.getAttribute('aria-hidden') === 'true' || getComputedStyle(el).display === 'none' || getComputedStyle(el).visibility === 'hidden',
-              required: el.required || el.getAttribute('aria-required') === 'true' || false
-            };
-          }
-          
-          // Build a simplified a11y tree - get interactive elements
-          const getInteractiveElements = () => {
-            const interactiveSelectors = [
-              'a[href]', 'button', 'input', 'textarea', 'select', 
-              '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
-              '[role="tab"]', '[role="menuitem"]', '[role="combobox"]', '[role="listbox"]',
-              '[role="option"]', '[role="switch"]', '[role="searchbox"]', '[role="textbox"]',
-              '[tabindex]:not([tabindex="-1"])'
-            ].join(',');
-            
-            return Array.from(doc.querySelectorAll(interactiveSelectors) || [])
-              .filter(el => {
-                // Filter out hidden elements
-                return !(el.getAttribute('aria-hidden') === 'true' || 
-                       getComputedStyle(el).display === 'none' || 
-                       getComputedStyle(el).visibility === 'hidden');
-              })
-              .map(el => {
-                const id = el.id ? '#' + el.id : '';
-                const classes = el.className ? '.' + el.className.replace(/\\s+/g, '.') : '';
-                return {
-                  a11y: getA11yInfo(el),
-                  selector: id || el.tagName.toLowerCase() + classes,
-                  xpath: getXPath(el)
-                };
-              }).slice(0, 50); // Limit to 50 elements to prevent too much data
-          };
-          
-          // Function to get XPath for an element
-          function getXPath(element) {
-            if (!element) return '';
-            if (element.id) return \`//*[@id="\${element.id}"]\`;
-            
-            let path = '';
-            while (element && element.nodeType === Node.ELEMENT_NODE) {
-              let sibling = element;
-              let siblings = [];
-              
-              while (sibling.previousSibling) {
-                const prev = sibling.previousSibling;
-                if (prev.nodeType === Node.ELEMENT_NODE && prev.tagName === element.tagName) {
-                  siblings.push(prev);
-                }
-                sibling = prev;
+            // Try to create a selector with tag name and classes
+            let selector = el.tagName.toLowerCase();
+            if (el.className) {
+              const classes = el.className.trim().split(/\\s+/);
+              if (classes.length > 0 && classes[0]) {
+                selector += '.' + classes.join('.');
               }
-              
-              const position = siblings.length > 0 ? siblings.length + 1 : 1;
-              const tagName = element.tagName.toLowerCase();
-              path = \`/\${tagName}[\${position}]\${path ? '/' + path : ''}\`;
-              
-              element = element.parentNode;
             }
             
-            return \`/\${path}\`;
+            // Check if this is unique enough
+            if (doc.querySelectorAll(selector).length === 1) return selector;
+            
+            // Add nth-child to make it more specific
+            let parent = el.parentNode;
+            if (parent) {
+              const siblings = Array.from(parent.children);
+              const index = siblings.indexOf(el) + 1;
+              return generateSelector(parent) + ' > ' + selector + ':nth-child(' + index + ')';
+            }
+            
+            return selector;
           }
           
+          // Get viewport dimensions
+          const viewport = {
+            width: window.innerWidth || document.documentElement.clientWidth,
+            height: window.innerHeight || document.documentElement.clientHeight
+          };
+          
+          // Extract headings
+          const headings = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
+            level: parseInt(h.tagName.charAt(1)),
+            text: h.innerText || h.textContent || "",
+            selector: generateSelector(h)
+          }));
+          
+          // Extract interactive elements
+          const elements = [];
+          const interactiveSelectors = [
+            'a', 'button', 'input', 'select', 'textarea', 'label'
+          ].join(',');
+          
+          Array.from(doc.querySelectorAll(interactiveSelectors)).forEach(el => {
+            const tagName = el.tagName.toLowerCase();
+            
+            // Skip hidden elements
+            const isHidden = el.hidden || 
+                           el.getAttribute('aria-hidden') === 'true' || 
+                           el.style.display === 'none' || 
+                           el.style.visibility === 'hidden';
+            if (isHidden) return;
+            
+            const rect = el.getBoundingClientRect();
+            
+            elements.push({
+              tag: tagName,
+              role: el.getAttribute('role') || undefined,
+              type: tagName === 'input' ? (el.type || undefined) : undefined,
+              name: el.name || undefined,
+              id: el.id || undefined,
+              classes: el.className ? el.className.trim().split(/\\s+/) : [],
+              text: (el.innerText || el.textContent || el.value || "").substring(0, 100),
+              placeholder: el.placeholder || undefined,
+              ariaLabel: el.getAttribute('aria-label') || undefined,
+              href: tagName === 'a' ? el.href : undefined,
+              boundingRect: {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height
+              },
+              selector: generateSelector(el)
+            });
+          });
+          
+          // Extract forms and their fields
+          const forms = [];
+          Array.from(doc.querySelectorAll('form')).forEach(form => {
+            const fields = [];
+            
+            Array.from(form.querySelectorAll('input, select, textarea')).forEach(field => {
+              fields.push({
+                selector: generateSelector(field),
+                name: field.name || undefined,
+                type: field.type || undefined,
+                placeholder: field.placeholder || undefined,
+                ariaLabel: field.getAttribute('aria-label') || undefined
+              });
+            });
+            
+            forms.push({
+              id: form.id || undefined,
+              action: form.action || undefined,
+              selector: generateSelector(form),
+              fields: fields
+            });
+          });
+          
+          // We don't have access to action history from the page context,
+          // so we'll return an empty array - the app will need to populate this
+          const history = [];
+          
           return {
-            html: doc.documentElement.outerHTML,
-            text: doc.body ? doc.body.innerText.substring(0, 5000) : "",
-            a11yTree: getInteractiveElements(),
-            links: Array.from(doc.links || []).map(link => ({
-              text: link.innerText || link.textContent || "",
-              href: link.href || "",
-              a11y: getA11yInfo(link)
-            })).slice(0, 50),
-            inputs: Array.from(doc.querySelectorAll('input, textarea') || []).map(input => ({
-              type: input.type || "text",
-              id: input.id || "",
-              name: input.name || "",
-              placeholder: input.placeholder || "",
-              a11y: getA11yInfo(input)
-            })),
-            headings: Array.from(doc.querySelectorAll('h1, h2, h3') || []).map(h => ({
-              level: h.tagName.toLowerCase(),
-              text: h.innerText || h.textContent || "",
-              a11y: getA11yInfo(h)
-            })).slice(0, 20),
-            buttons: Array.from(doc.querySelectorAll('button') || []).map(btn => ({
-              text: btn.innerText || btn.textContent || "",
-              id: btn.id || "",
-              disabled: btn.disabled || false,
-              a11y: getA11yInfo(btn)
-            })).slice(0, 20)
+            viewport,
+            headings,
+            elements,
+            forms,
+            history
           };
         } catch (err) {
           console.error("Error in page content extraction:", err);
           return {
-            html: "",
-            text: "Error extracting page content: " + err.message,
-            a11yTree: [],
-            links: [],
-            inputs: [],
+            viewport: { width: 0, height: 0 },
             headings: [],
-            buttons: []
+            elements: [],
+            forms: [],
+            history: []
           };
         }
       })();
@@ -316,6 +343,10 @@ class App {
       try {
         // Use the PageContentExtractor to capture the page snapshot
         const pageData = await this.pageContentExtractor.capturePageSnapshot();
+
+        // Save page data to a file
+        this.savePageDataToFile(pageData);
+
         await window.aiBrowser.sendPageSnapshot(pageData);
       } catch (error) {
         console.error("Error in page snapshot handler:", error);
@@ -323,6 +354,32 @@ class App {
         await window.aiBrowser.sendPageSnapshot({});
       }
     });
+  }
+
+  /**
+   * Save page data to a file in the current directory
+   * @param {Object} pageData - The page snapshot data
+   */
+  savePageDataToFile(pageData) {
+    try {
+      // Create a filename based on the current timestamp and page title
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const sanitizedTitle = (pageData.title || "untitled")
+        .replace(/[^a-z0-9]/gi, "_")
+        .substring(0, 30);
+      const filename = `page_snapshot_${sanitizedTitle}_${timestamp}.json`;
+
+      // Convert the data to JSON
+      const jsonData = JSON.stringify(pageData, null, 2);
+
+      // Use IPC to save the file via the main process
+      window.aiBrowser
+        .saveFile(filename, jsonData)
+        .then(() => console.log(`Page snapshot saved to ${filename}`))
+        .catch((err) => console.error("Error saving page snapshot:", err));
+    } catch (error) {
+      console.error("Error preparing page data for saving:", error);
+    }
   }
 
   /**
