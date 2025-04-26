@@ -91,3 +91,4 @@ class AppMenu {
 }
 
 module.exports = AppMenu;
+ 

@@ -362,29 +362,17 @@ class App {
 
         const action = resp.action;
         console.log("Action to execute:", action);
-        this.statusSpan.innerText = `Ready to execute: ${action.action}`;
 
-        const runAI = confirm(
-          `Execute AI action: "${action.action}"${
-            action.selector ? ` on "${action.selector}"` : ""
-          }${action.value ? ` with value "${action.value}"` : ""}${
-            action.url ? ` to "${action.url}"` : ""
-          }? Cancel to skip.`
-        );
-        if (runAI) {
-          console.log("User confirmed execution of action:", action);
-          try {
-            await this.planExecutor.executePlan(action);
-            console.log("Action executed successfully");
-            this.statusSpan.innerText = "Action completed. Enter next command.";
-          } catch (execError) {
-            console.error("Error executing action:", execError);
-            this.statusSpan.innerText =
-              "Action execution failed: " + execError.message;
-          }
-        } else {
-          console.log("User skipped execution of action:", action);
-          this.statusSpan.innerText = "Action skipped. Enter next command.";
+        // Execute action immediately without confirmation
+        try {
+          this.statusSpan.innerText = `Executing: ${action.action}`;
+          await this.planExecutor.executePlan(action);
+          console.log("Action executed successfully");
+          this.statusSpan.innerText = "Action completed. Enter next command.";
+        } catch (execError) {
+          console.error("Error executing action:", execError);
+          this.statusSpan.innerText =
+            "Action execution failed: " + execError.message;
         }
       } catch (err) {
         console.error("Error in command execution flow:", err);
@@ -611,61 +599,19 @@ class App {
             return;
           }
           const transcript = resp.transcript;
-          // Read aloud
+
+          // Read transcript aloud
           const utter = new SpeechSynthesisUtterance(transcript);
 
           // Keep media paused during speech synthesis
           utter.onend = () => {
-            // Only resume media after user makes a choice or dismisses
+            // Directly execute the command after reading it aloud
+            this.commandInput.value = transcript;
+            this.executeBtn.click();
           };
 
           speechSynthesis.speak(utter);
-          // Confirmation overlay
-          const confirmOverlay = document.createElement("div");
-          confirmOverlay.id = "confirm-overlay";
-          Object.assign(confirmOverlay.style, {
-            position: "fixed",
-            top: "0",
-            left: "0",
-            width: "100%",
-            height: "100%",
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: "3000",
-          });
-          const msg = document.createElement("p");
-          msg.textContent = `You said: "${transcript}". Press Y to execute or N to reset.`;
-          Object.assign(msg.style, {
-            color: "white",
-            fontSize: "18px",
-            background: "#000000cc",
-            padding: "16px",
-            borderRadius: "8px",
-          });
-          confirmOverlay.appendChild(msg);
-          document.body.appendChild(confirmOverlay);
-          const onKey = (e) => {
-            if (e.key.toLowerCase() === "y") {
-              this.commandInput.value = transcript;
-              document.body.removeChild(confirmOverlay);
-              document.removeEventListener("keydown", onKey);
-              this.executeBtn.click();
-              this.statusSpan.innerText = "";
-
-              // Keep media paused as command executes
-            } else if (e.key.toLowerCase() === "n") {
-              this.commandInput.value = "";
-              document.body.removeChild(confirmOverlay);
-              document.removeEventListener("keydown", onKey);
-              this.statusSpan.innerText = "";
-
-              // Resume media playback on cancel
-              this.resumeMedia(pausedMediaElements);
-            }
-          };
-          document.addEventListener("keydown", onKey);
+          this.statusSpan.innerText = `Executing: "${transcript}"`;
         };
         reader.readAsDataURL(blob);
       };
