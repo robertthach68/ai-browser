@@ -501,6 +501,9 @@ class App {
         micBtn.classList.add("recording");
       }
 
+      // Pause all media in the webview
+      const pausedMediaElements = await this.pauseAllMedia();
+
       // Create recording overlay
       const overlay = document.createElement("div");
       overlay.id = "voice-overlay";
@@ -545,11 +548,20 @@ class App {
           if (resp.status !== "ok") {
             console.error("Transcription error", resp.error);
             this.statusSpan.innerText = "Transcription failed";
+
+            // Resume media playback on failure
+            this.resumeMedia(pausedMediaElements);
             return;
           }
           const transcript = resp.transcript;
           // Read aloud
           const utter = new SpeechSynthesisUtterance(transcript);
+
+          // Keep media paused during speech synthesis
+          utter.onend = () => {
+            // Only resume media after user makes a choice or dismisses
+          };
+
           speechSynthesis.speak(utter);
           // Confirmation overlay
           const confirmOverlay = document.createElement("div");
@@ -584,11 +596,16 @@ class App {
               document.removeEventListener("keydown", onKey);
               this.executeBtn.click();
               this.statusSpan.innerText = "";
+
+              // Keep media paused as command executes
             } else if (e.key.toLowerCase() === "n") {
               this.commandInput.value = "";
               document.body.removeChild(confirmOverlay);
               document.removeEventListener("keydown", onKey);
               this.statusSpan.innerText = "";
+
+              // Resume media playback on cancel
+              this.resumeMedia(pausedMediaElements);
             }
           };
           document.addEventListener("keydown", onKey);
@@ -606,6 +623,83 @@ class App {
 
       console.error("Error during voice prompt:", err);
       this.statusSpan.innerText = "Voice prompt error: " + err.message;
+    }
+  }
+
+  /**
+   * Pause all media elements in the webview and return information to resume them later
+   * @returns {Promise<Array>} Array of media elements that were playing
+   */
+  async pauseAllMedia() {
+    try {
+      return await this.webview.executeJavaScript(`
+        (function() {
+          // Find all media elements (video and audio)
+          const mediaElements = Array.from(document.querySelectorAll('video, audio'));
+          
+          // Track which elements were playing
+          const playingElements = [];
+          
+          // Pause each media element and record its state
+          mediaElements.forEach((media, index) => {
+            if (!media.paused) {
+              // Record information about the playing media
+              playingElements.push({
+                index,
+                currentTime: media.currentTime,
+                wasPlaying: true
+              });
+              
+              // Pause the media
+              media.pause();
+              console.log('Paused media element:', media);
+            }
+          });
+          
+          console.log('Paused media elements:', playingElements.length);
+          return playingElements;
+        })();
+      `);
+    } catch (err) {
+      console.error("Error pausing media:", err);
+      return [];
+    }
+  }
+
+  /**
+   * Resume previously paused media elements
+   * @param {Array} pausedMediaElements - Array of media elements that were playing
+   */
+  async resumeMedia(pausedMediaElements) {
+    if (!pausedMediaElements || pausedMediaElements.length === 0) {
+      return;
+    }
+
+    try {
+      await this.webview.executeJavaScript(`
+        (function() {
+          // Get all media elements again
+          const mediaElements = Array.from(document.querySelectorAll('video, audio'));
+          
+          // Resume elements that were playing
+          const toResume = ${JSON.stringify(pausedMediaElements)};
+          
+          toResume.forEach(item => {
+            const media = mediaElements[item.index];
+            if (media && item.wasPlaying) {
+              // Resume playback
+              media.currentTime = item.currentTime;
+              media.play()
+                .then(() => console.log('Resumed media playback'))
+                .catch(err => console.error('Error resuming playback:', err));
+            }
+          });
+          
+          console.log('Attempted to resume', toResume.length, 'media elements');
+        })();
+      `);
+    } catch (err) {
+      console.error("Error resuming media:", err);
     }
   }
 
