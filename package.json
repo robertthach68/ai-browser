@@ -9,6 +9,7 @@
     "build": "electron-builder"
   },
   "dependencies": {
+    "@google-cloud/speech": "^7.0.1",
     "dotenv": "^10.0.0",
     "openai": "^4.8.0"
   },

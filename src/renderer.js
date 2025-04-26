@@ -317,6 +317,13 @@ class App {
       // Only handle when webview is not focused
       if (document.activeElement === this.webview) return;
 
+      // Voice prompt on Command+L
+      if (e.metaKey && e.key.toLowerCase() === "l") {
+        e.preventDefault();
+        this.startVoicePrompt();
+        return;
+      }
+
       // Ctrl+R or F5 to refresh
       if ((e.ctrlKey && e.key === "r") || e.key === "F5") {
         this.browserController.refresh();
@@ -330,11 +337,6 @@ class App {
       // Alt+Right to go forward
       if (e.altKey && e.key === "ArrowRight") {
         this.browserController.goForward();
-      }
-
-      // Ctrl+L to focus URL input
-      if (e.ctrlKey && e.key === "l") {
-        this.createTemporaryUrlInput();
       }
     });
   }
@@ -411,47 +413,105 @@ class App {
   }
 
   /**
-   * Create a temporary URL input for navigation
+   * Start voice-based prompt: record audio, transcribe, read aloud, then confirm
    */
-  createTemporaryUrlInput() {
-    this.webview.getURL().then((url) => {
-      // Create a temporary input for URL editing
-      const tempInput = document.createElement("input");
-      tempInput.type = "text";
-      tempInput.value = url;
-      tempInput.style.position = "fixed";
-      tempInput.style.top = "0";
-      tempInput.style.left = "0";
-      tempInput.style.width = "100%";
-      tempInput.style.height = "30px";
-      tempInput.style.zIndex = "2000";
-
-      document.body.appendChild(tempInput);
-      tempInput.select();
-
-      tempInput.addEventListener("keydown", (ke) => {
-        if (ke.key === "Enter") {
-          this.browserController.navigate(tempInput.value);
-          tempInput.remove();
-          ke.preventDefault();
-        } else if (ke.key === "Escape") {
-          tempInput.remove();
-          ke.preventDefault();
-        }
+  async startVoicePrompt() {
+    try {
+      this.statusSpan.innerText = "Listening...";
+      // Create recording overlay
+      const overlay = document.createElement("div");
+      overlay.id = "voice-overlay";
+      Object.assign(overlay.style, {
+        position: "fixed",
+        top: "0",
+        left: "0",
+        width: "100%",
+        height: "100%",
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: "3000",
       });
+      const stopBtn = document.createElement("button");
+      stopBtn.textContent = "Stop Recording";
+      Object.assign(stopBtn.style, { padding: "12px 24px", fontSize: "16px" });
+      overlay.appendChild(stopBtn);
+      document.body.appendChild(overlay);
 
-      tempInput.addEventListener("blur", () => {
-        tempInput.remove();
-      });
-    });
-  }
-
-  /**
-   * Log an action through the IPC
-   * @param {Object} record - The action record to log
-   */
-  logAction(record) {
-    window.aiBrowser.logAction(record);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const options = { mimeType: "audio/webm;codecs=opus" };
+      const recorder = new MediaRecorder(stream, options);
+      const chunks = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = async () => {
+        document.body.removeChild(overlay);
+        stream.getTracks().forEach((t) => t.stop());
+        this.statusSpan.innerText = "Processing audio...";
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64data = reader.result.split(",")[1];
+          const resp = await window.aiBrowser.transcribeAudio(base64data);
+          if (resp.status !== "ok") {
+            console.error("Transcription error", resp.error);
+            this.statusSpan.innerText = "Transcription failed";
+            return;
+          }
+          const transcript = resp.transcript;
+          // Read aloud
+          const utter = new SpeechSynthesisUtterance(transcript);
+          speechSynthesis.speak(utter);
+          // Confirmation overlay
+          const confirmOverlay = document.createElement("div");
+          confirmOverlay.id = "confirm-overlay";
+          Object.assign(confirmOverlay.style, {
+            position: "fixed",
+            top: "0",
+            left: "0",
+            width: "100%",
+            height: "100%",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: "3000",
+          });
+          const msg = document.createElement("p");
+          msg.textContent = `You said: "${transcript}". Press Y to execute or N to reset.`;
+          Object.assign(msg.style, {
+            color: "white",
+            fontSize: "18px",
+            background: "#000000cc",
+            padding: "16px",
+            borderRadius: "8px",
+          });
+          confirmOverlay.appendChild(msg);
+          document.body.appendChild(confirmOverlay);
+          const onKey = (e) => {
+            if (e.key.toLowerCase() === "y") {
+              this.commandInput.value = transcript;
+              document.body.removeChild(confirmOverlay);
+              document.removeEventListener("keydown", onKey);
+              this.executeBtn.click();
+              this.statusSpan.innerText = "";
+            } else if (e.key.toLowerCase() === "n") {
+              this.commandInput.value = "";
+              document.body.removeChild(confirmOverlay);
+              document.removeEventListener("keydown", onKey);
+              this.statusSpan.innerText = "";
+            }
+          };
+          document.addEventListener("keydown", onKey);
+        };
+        reader.readAsDataURL(blob);
+      };
+      recorder.start();
+      stopBtn.onclick = () => recorder.stop();
+    } catch (err) {
+      console.error("Error during voice prompt:", err);
+      this.statusSpan.innerText = "Voice prompt error: " + err.message;
+    }
   }
 
   /**

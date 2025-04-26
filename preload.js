@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld("aiBrowser", {
   // Accessibility features
   explainPage: () => ipcRenderer.invoke("explain-page"),
 
+  // Speech transcription
+  transcribeAudio: (audioBase64) =>
+    ipcRenderer.invoke("transcribe-audio", audioBase64),
+
   // Logging
   logAction: (record) => ipcRenderer.send("log-action", record),
 

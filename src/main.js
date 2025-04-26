@@ -8,12 +8,14 @@ const AIConnector = require("./services/AIConnector");
 const AIPageReader = require("./services/AIPageReader");
 const Logger = require("./utils/Logger");
 const AppMenu = require("./components/AppMenu");
+const SpeechService = require("./services/SpeechService");
 
 // Global variables
 let mainWindow;
 let aiConnector;
 let aiPageReader;
 let logger;
+let speechService;
 let pendingPageSnapshotPromises = {};
 
 /**
@@ -46,6 +48,7 @@ function initialize() {
   // Create our service instances
   aiConnector = new AIConnector(process.env.OPENAI_API_KEY);
   aiPageReader = new AIPageReader(process.env.OPENAI_API_KEY);
+  speechService = new SpeechService();
   logger = new Logger();
 
   // Set up IPC handlers
@@ -181,6 +184,17 @@ function setupIpcHandlers() {
         status: "error",
         error: error.message,
       };
+    }
+  });
+
+  // Handle transcribe audio request
+  ipcMain.handle("transcribe-audio", async (event, audioBase64) => {
+    try {
+      const transcript = await speechService.transcribeAudio(audioBase64);
+      return { status: "ok", transcript };
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      return { status: "error", error: error.message };
     }
   });
 
