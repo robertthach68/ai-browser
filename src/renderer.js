@@ -1751,6 +1751,8 @@ class PlanExecutor {
     const closeBtn = document.createElement("button");
     closeBtn.innerHTML = "&times;";
     closeBtn.addEventListener("click", () => {
+      // Stop any ongoing speech when closing
+      speechSynthesis.cancel();
       document.body.removeChild(overlay);
     });
 
@@ -1766,16 +1768,75 @@ class PlanExecutor {
 
     // Add each suggestion as a clickable button
     if (Array.isArray(suggestions) && suggestions.length > 0) {
-      suggestions.forEach((suggestion) => {
+      // Pause any ongoing media before starting speech
+      this.pauseAllMediaAsync();
+
+      // Prepare text to speak
+      let textToSpeak = "Suggested Actions: ";
+
+      suggestions.forEach((suggestion, index) => {
         const actionBtn = document.createElement("button");
         actionBtn.className = "suggested-action";
         actionBtn.textContent = suggestion;
         actionBtn.addEventListener("click", () => {
           document.getElementById("command-input").value = suggestion;
+          // Stop speech when an action is selected
+          speechSynthesis.cancel();
           document.body.removeChild(overlay);
         });
         actionsList.appendChild(actionBtn);
+
+        // Add to speech text
+        textToSpeak += `${index + 1}: ${suggestion}. `;
       });
+
+      // Create controls for speech
+      const speechControls = document.createElement("div");
+      speechControls.className = "speech-controls";
+      speechControls.style.margin = "15px 0";
+      speechControls.style.display = "flex";
+      speechControls.style.gap = "10px";
+
+      const pauseResumeBtn = document.createElement("button");
+      pauseResumeBtn.textContent = "🔊 Pause";
+      pauseResumeBtn.className = "suggested-action";
+      pauseResumeBtn.addEventListener("click", () => {
+        if (speechSynthesis.paused) {
+          speechSynthesis.resume();
+          pauseResumeBtn.textContent = "🔊 Pause";
+        } else if (speechSynthesis.speaking) {
+          speechSynthesis.pause();
+          pauseResumeBtn.textContent = "▶️ Resume";
+        }
+      });
+
+      const stopBtn = document.createElement("button");
+      stopBtn.textContent = "🛑 Stop";
+      stopBtn.className = "suggested-action";
+      stopBtn.addEventListener("click", () => {
+        speechSynthesis.cancel();
+      });
+
+      speechControls.appendChild(pauseResumeBtn);
+      speechControls.appendChild(stopBtn);
+
+      // Start speaking
+      setTimeout(() => {
+        // Use speech synthesis to read suggestions
+        speechSynthesis.cancel(); // Cancel any ongoing speech
+        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+        utterance.onend = () => {
+          // Allow media to resume when speech ends
+          // Only if the popup is not visible anymore
+          if (!document.body.contains(overlay)) {
+            this.resumeMediaAsync();
+          }
+        };
+        speechSynthesis.speak(utterance);
+      }, 300);
+
+      // Add speech controls to the dialog
+      actionsList.appendChild(speechControls);
     } else {
       const message = document.createElement("p");
       message.textContent = "No suggestions available for this page.";
@@ -1815,7 +1876,11 @@ class PlanExecutor {
     const closeBtn = document.createElement("button");
     closeBtn.innerHTML = "&times;";
     closeBtn.addEventListener("click", () => {
+      // Stop any ongoing speech when closing
+      speechSynthesis.cancel();
       document.body.removeChild(overlay);
+      // Resume media when closing
+      this.resumeMediaAsync();
     });
 
     header.appendChild(title);
@@ -1832,19 +1897,37 @@ class PlanExecutor {
     summaryText.textContent = summary;
     summarySection.appendChild(summaryText);
 
-    // Add read aloud button
-    const readBtn = document.createElement("button");
-    readBtn.textContent = "🔊 Read Aloud";
-    readBtn.className = "suggested-action";
-    readBtn.style.marginTop = "10px";
-    readBtn.addEventListener("click", () => {
-      // Use speech synthesis to read the summary
-      speechSynthesis.cancel(); // Cancel any ongoing speech
-      const utterance = new SpeechSynthesisUtterance(summary);
-      speechSynthesis.speak(utterance);
+    // Create controls for speech
+    const speechControls = document.createElement("div");
+    speechControls.className = "speech-controls";
+    speechControls.style.margin = "15px 0";
+    speechControls.style.display = "flex";
+    speechControls.style.gap = "10px";
+
+    const pauseResumeBtn = document.createElement("button");
+    pauseResumeBtn.textContent = "🔊 Pause";
+    pauseResumeBtn.className = "suggested-action";
+    pauseResumeBtn.addEventListener("click", () => {
+      if (speechSynthesis.paused) {
+        speechSynthesis.resume();
+        pauseResumeBtn.textContent = "🔊 Pause";
+      } else if (speechSynthesis.speaking) {
+        speechSynthesis.pause();
+        pauseResumeBtn.textContent = "▶️ Resume";
+      }
     });
 
-    summarySection.appendChild(readBtn);
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = "🛑 Stop";
+    stopBtn.className = "suggested-action";
+    stopBtn.addEventListener("click", () => {
+      speechSynthesis.cancel();
+    });
+
+    speechControls.appendChild(pauseResumeBtn);
+    speechControls.appendChild(stopBtn);
+
+    summarySection.appendChild(speechControls);
     content.appendChild(summarySection);
 
     // Assemble dialog
@@ -1854,6 +1937,25 @@ class PlanExecutor {
 
     // Add to document
     document.body.appendChild(overlay);
+
+    // Pause any ongoing media before starting speech
+    this.pauseAllMediaAsync().then((pausedMediaElements) => {
+      // Use speech synthesis to read the summary
+      setTimeout(() => {
+        speechSynthesis.cancel(); // Cancel any ongoing speech
+        const utterance = new SpeechSynthesisUtterance(
+          "Page Summary: " + summary
+        );
+        utterance.onend = () => {
+          // Allow media to resume when speech ends
+          // Only if the popup is not visible anymore
+          if (!document.body.contains(overlay)) {
+            this.resumeMediaAsync(pausedMediaElements);
+          }
+        };
+        speechSynthesis.speak(utterance);
+      }, 300);
+    });
   }
 
   /**
@@ -1878,7 +1980,11 @@ class PlanExecutor {
     const closeBtn = document.createElement("button");
     closeBtn.innerHTML = "&times;";
     closeBtn.addEventListener("click", () => {
+      // Stop any ongoing speech when closing
+      speechSynthesis.cancel();
       document.body.removeChild(overlay);
+      // Resume media when closing
+      this.resumeMediaAsync();
     });
 
     header.appendChild(title);
@@ -1895,19 +2001,37 @@ class PlanExecutor {
     descriptionText.textContent = description;
     descriptionSection.appendChild(descriptionText);
 
-    // Add read aloud button
-    const readBtn = document.createElement("button");
-    readBtn.textContent = "🔊 Read Aloud";
-    readBtn.className = "suggested-action";
-    readBtn.style.marginTop = "10px";
-    readBtn.addEventListener("click", () => {
-      // Use speech synthesis to read the description
-      speechSynthesis.cancel(); // Cancel any ongoing speech
-      const utterance = new SpeechSynthesisUtterance(description);
-      speechSynthesis.speak(utterance);
+    // Create controls for speech
+    const speechControls = document.createElement("div");
+    speechControls.className = "speech-controls";
+    speechControls.style.margin = "15px 0";
+    speechControls.style.display = "flex";
+    speechControls.style.gap = "10px";
+
+    const pauseResumeBtn = document.createElement("button");
+    pauseResumeBtn.textContent = "🔊 Pause";
+    pauseResumeBtn.className = "suggested-action";
+    pauseResumeBtn.addEventListener("click", () => {
+      if (speechSynthesis.paused) {
+        speechSynthesis.resume();
+        pauseResumeBtn.textContent = "🔊 Pause";
+      } else if (speechSynthesis.speaking) {
+        speechSynthesis.pause();
+        pauseResumeBtn.textContent = "▶️ Resume";
+      }
     });
 
-    descriptionSection.appendChild(readBtn);
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = "🛑 Stop";
+    stopBtn.className = "suggested-action";
+    stopBtn.addEventListener("click", () => {
+      speechSynthesis.cancel();
+    });
+
+    speechControls.appendChild(pauseResumeBtn);
+    speechControls.appendChild(stopBtn);
+
+    descriptionSection.appendChild(speechControls);
     content.appendChild(descriptionSection);
 
     // Assemble dialog
@@ -1917,6 +2041,52 @@ class PlanExecutor {
 
     // Add to document
     document.body.appendChild(overlay);
+
+    // Pause any ongoing media before starting speech
+    this.pauseAllMediaAsync().then((pausedMediaElements) => {
+      // Use speech synthesis to read the description
+      setTimeout(() => {
+        speechSynthesis.cancel(); // Cancel any ongoing speech
+        const utterance = new SpeechSynthesisUtterance(
+          "Page Content: " + description
+        );
+        utterance.onend = () => {
+          // Allow media to resume when speech ends
+          // Only if the popup is not visible anymore
+          if (!document.body.contains(overlay)) {
+            this.resumeMediaAsync(pausedMediaElements);
+          }
+        };
+        speechSynthesis.speak(utterance);
+      }, 300);
+    });
+  }
+
+  /**
+   * Pause all media elements and return a promise with paused elements
+   * @returns {Promise<Array>} Array of media elements that were playing
+   */
+  async pauseAllMediaAsync() {
+    try {
+      return await this.pauseAllMedia();
+    } catch (err) {
+      console.error("Error pausing media:", err);
+      return [];
+    }
+  }
+
+  /**
+   * Resume media elements asynchronously
+   * @param {Array} pausedMediaElements - Array of media elements to resume
+   */
+  async resumeMediaAsync(pausedMediaElements) {
+    try {
+      if (pausedMediaElements) {
+        await this.resumeMedia(pausedMediaElements);
+      }
+    } catch (err) {
+      console.error("Error resuming media:", err);
+    }
   }
 }
 
