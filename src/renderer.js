@@ -267,6 +267,12 @@ class App {
     this.planExecutor = new PlanExecutor(this.webview, this.statusSpan, this);
     this.pageContentExtractor = new PageContentExtractor(this.webview);
 
+    // Track recording state
+    this.isRecording = false;
+    this.mediaRecorder = null;
+    this.recordingStream = null;
+    this.recordingOverlay = null;
+
     this.setupUIEventListeners();
     this.setupIPCListeners();
   }
@@ -498,8 +504,16 @@ class App {
    * Start voice-based prompt: record audio, transcribe, read aloud, then confirm
    */
   async startVoicePrompt() {
+    // If already recording, stop the recording and process the audio
+    if (this.isRecording && this.mediaRecorder) {
+      console.log("Stopping recording via Command+L");
+      this.mediaRecorder.stop();
+      return;
+    }
+
     try {
       this.statusSpan.innerText = "Listening...";
+      this.isRecording = true;
 
       // Toggle recording state on mic button
       const micBtn = document.getElementById("mic-btn");
@@ -511,9 +525,9 @@ class App {
       const pausedMediaElements = await this.pauseAllMedia();
 
       // Create recording overlay
-      const overlay = document.createElement("div");
-      overlay.id = "voice-overlay";
-      Object.assign(overlay.style, {
+      this.recordingOverlay = document.createElement("div");
+      this.recordingOverlay.id = "voice-overlay";
+      Object.assign(this.recordingOverlay.style, {
         position: "fixed",
         top: "0",
         left: "0",
@@ -525,22 +539,59 @@ class App {
         justifyContent: "center",
         zIndex: "3000",
       });
+
+      const infoText = document.createElement("p");
+      infoText.textContent =
+        "Listening... Press Command+L again to stop recording.";
+      Object.assign(infoText.style, {
+        color: "white",
+        background: "rgba(0,0,0,0.7)",
+        padding: "15px",
+        borderRadius: "8px",
+        marginBottom: "20px",
+      });
+
       const stopBtn = document.createElement("button");
       stopBtn.textContent = "Stop Recording";
       Object.assign(stopBtn.style, { padding: "12px 24px", fontSize: "16px" });
-      overlay.appendChild(stopBtn);
-      document.body.appendChild(overlay);
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const buttonContainer = document.createElement("div");
+      buttonContainer.style.display = "flex";
+      buttonContainer.style.flexDirection = "column";
+      buttonContainer.style.alignItems = "center";
+      buttonContainer.style.gap = "15px";
+
+      buttonContainer.appendChild(infoText);
+      buttonContainer.appendChild(stopBtn);
+      this.recordingOverlay.appendChild(buttonContainer);
+      document.body.appendChild(this.recordingOverlay);
+
+      this.recordingStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
       const options = { mimeType: "audio/webm;codecs=opus" };
-      const recorder = new MediaRecorder(stream, options);
+      this.mediaRecorder = new MediaRecorder(this.recordingStream, options);
       const chunks = [];
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      recorder.onstop = async () => {
-        document.body.removeChild(overlay);
-        stream.getTracks().forEach((t) => t.stop());
+      this.mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      this.mediaRecorder.onstop = async () => {
+        // Clean up recording state
+        this.isRecording = false;
+
+        if (
+          this.recordingOverlay &&
+          document.body.contains(this.recordingOverlay)
+        ) {
+          document.body.removeChild(this.recordingOverlay);
+        }
+        this.recordingOverlay = null;
+
+        if (this.recordingStream) {
+          this.recordingStream.getTracks().forEach((t) => t.stop());
+          this.recordingStream = null;
+        }
 
         // Reset mic button state
+        const micBtn = document.getElementById("mic-btn");
         if (micBtn) {
           micBtn.classList.remove("recording");
         }
@@ -618,9 +669,14 @@ class App {
         };
         reader.readAsDataURL(blob);
       };
-      recorder.start();
-      stopBtn.onclick = () => recorder.stop();
+      this.mediaRecorder.start();
+      stopBtn.onclick = () => this.mediaRecorder.stop();
     } catch (err) {
+      // Reset recording state
+      this.isRecording = false;
+      this.mediaRecorder = null;
+      this.recordingStream = null;
+
       // Reset mic button state on error
       const micBtn = document.getElementById("mic-btn");
       if (micBtn) {
