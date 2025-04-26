@@ -225,6 +225,14 @@ class App {
       });
     });
 
+    // Microphone button click
+    const micBtn = document.getElementById("mic-btn");
+    if (micBtn) {
+      micBtn.addEventListener("click", () => {
+        this.startVoicePrompt();
+      });
+    }
+
     // Explain Page button click
     const explainBtn = document.getElementById("explain-btn");
     if (explainBtn) {
@@ -312,17 +320,17 @@ class App {
       }
     });
 
-    // Add keyboard shortcuts
+    // Add keyboard shortcuts at document level
     document.addEventListener("keydown", (e) => {
-      // Only handle when webview is not focused
-      if (document.activeElement === this.webview) return;
-
-      // Voice prompt on Command+L
+      // Voice prompt on Command+L always
       if (e.metaKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
         this.startVoicePrompt();
         return;
       }
+
+      // Only handle other shortcuts when webview is not focused
+      if (document.activeElement === this.webview) return;
 
       // Ctrl+R or F5 to refresh
       if ((e.ctrlKey && e.key === "r") || e.key === "F5") {
@@ -337,6 +345,74 @@ class App {
       // Alt+Right to go forward
       if (e.altKey && e.key === "ArrowRight") {
         this.browserController.goForward();
+      }
+    });
+
+    // Add window-level event listener for Command+L to ensure it works globally
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.metaKey && e.key.toLowerCase() === "l") {
+          e.preventDefault();
+          e.stopPropagation();
+          this.startVoicePrompt();
+        }
+      },
+      true
+    );
+
+    // Ensure Command+L works in webview by handling webview keydown events
+    this.webview.addEventListener("keydown", (e) => {
+      // For Command+L, we need to prevent webview default behavior
+      if (e.metaKey && e.key.toLowerCase() === "l") {
+        this.webview.stop(); // Stop any navigation
+        e.preventDefault();
+        this.startVoicePrompt();
+      }
+    });
+
+    // Add listener for webview load to inject key listener directly into the page
+    this.webview.addEventListener("dom-ready", () => {
+      // Inject a script that will forward Command+L to the parent window
+      this.webview.executeJavaScript(`
+        // Remove any existing listener first to avoid duplicates
+        if (window._commandLHandler) {
+          document.removeEventListener('keydown', window._commandLHandler);
+        }
+        
+        // Create a listener that will send a message to the parent window
+        window._commandLHandler = function(e) {
+          if (e.metaKey && e.key.toLowerCase() === 'l') {
+            e.preventDefault();
+            e.stopPropagation();
+            window.parent.postMessage({ type: 'command-l-pressed' }, '*');
+            return false;
+          }
+        };
+        
+        // Add the listener to the document
+        document.addEventListener('keydown', window._commandLHandler, true);
+        
+        // Also add to any iframes that might be present
+        try {
+          const frames = document.querySelectorAll('iframe');
+          frames.forEach(frame => {
+            if (frame.contentDocument) {
+              frame.contentDocument.addEventListener('keydown', window._commandLHandler, true);
+            }
+          });
+        } catch(err) {
+          console.error('Error adding key handlers to iframes:', err);
+        }
+
+        console.log('Command+L handler injected into page');
+      `);
+    });
+
+    // Listen for messages from the webview
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "command-l-pressed") {
+        this.startVoicePrompt();
       }
     });
   }
@@ -418,6 +494,13 @@ class App {
   async startVoicePrompt() {
     try {
       this.statusSpan.innerText = "Listening...";
+
+      // Toggle recording state on mic button
+      const micBtn = document.getElementById("mic-btn");
+      if (micBtn) {
+        micBtn.classList.add("recording");
+      }
+
       // Create recording overlay
       const overlay = document.createElement("div");
       overlay.id = "voice-overlay";
@@ -447,6 +530,12 @@ class App {
       recorder.onstop = async () => {
         document.body.removeChild(overlay);
         stream.getTracks().forEach((t) => t.stop());
+
+        // Reset mic button state
+        if (micBtn) {
+          micBtn.classList.remove("recording");
+        }
+
         this.statusSpan.innerText = "Processing audio...";
         const blob = new Blob(chunks, { type: "audio/webm" });
         const reader = new FileReader();
@@ -509,6 +598,12 @@ class App {
       recorder.start();
       stopBtn.onclick = () => recorder.stop();
     } catch (err) {
+      // Reset mic button state on error
+      const micBtn = document.getElementById("mic-btn");
+      if (micBtn) {
+        micBtn.classList.remove("recording");
+      }
+
       console.error("Error during voice prompt:", err);
       this.statusSpan.innerText = "Voice prompt error: " + err.message;
     }
@@ -615,6 +710,15 @@ class App {
 
     // Add to document and show
     document.body.appendChild(overlay);
+  }
+
+  /**
+   * Log an action through the IPC
+   * @param {Object} record - The action record to log
+   */
+  logAction(record) {
+    // Forward to main via preload
+    window.aiBrowser.logAction(record);
   }
 }
 
@@ -877,7 +981,8 @@ class PlanExecutor {
         `Renderer PlanExecutor: action ${actionType} completed successfully`
       );
 
-      this.logger.logAction({
+      // Log action via IPC directly
+      window.aiBrowser.logAction({
         action: actionType,
         selector,
         value,
@@ -888,7 +993,8 @@ class PlanExecutor {
       this.updateStatus(`Action ${actionType} completed`);
     } catch (e) {
       console.error("Renderer PlanExecutor: error executing action:", e);
-      this.logger.logAction({
+      // Log error via IPC directly
+      window.aiBrowser.logAction({
         action: actionType,
         selector,
         value,
