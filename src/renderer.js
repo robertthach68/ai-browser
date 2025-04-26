@@ -294,6 +294,14 @@ class App {
       });
     }
 
+    // Describe Page button click
+    const describeBtn = document.getElementById("describe-btn");
+    if (describeBtn) {
+      describeBtn.addEventListener("click", () => {
+        this.describePageAloud();
+      });
+    }
+
     // Explain Page button click
     const explainBtn = document.getElementById("explain-btn");
     if (explainBtn) {
@@ -390,6 +398,13 @@ class App {
         return;
       }
 
+      // Describe page on Command+D
+      if (e.metaKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        this.describePageAloud();
+        return;
+      }
+
       // Only handle other shortcuts when webview is not focused
       if (document.activeElement === this.webview) return;
 
@@ -409,7 +424,7 @@ class App {
       }
     });
 
-    // Add window-level event listener for Command+L to ensure it works globally
+    // Add window-level event listener for command shortcuts to ensure they work globally
     window.addEventListener(
       "keydown",
       (e) => {
@@ -417,6 +432,12 @@ class App {
           e.preventDefault();
           e.stopPropagation();
           this.startVoicePrompt();
+        }
+
+        if (e.metaKey && e.key.toLowerCase() === "d") {
+          e.preventDefault();
+          e.stopPropagation();
+          this.describePageAloud();
         }
       },
       true
@@ -430,6 +451,13 @@ class App {
         e.preventDefault();
         this.startVoicePrompt();
       }
+
+      // For Command+D, trigger page description
+      if (e.metaKey && e.key.toLowerCase() === "d") {
+        this.webview.stop(); // Stop any navigation
+        e.preventDefault();
+        this.describePageAloud();
+      }
     });
 
     // Add listener for webview load to inject key listener directly into the page
@@ -437,36 +465,38 @@ class App {
       // Inject a script that will forward Command+L to the parent window
       this.webview.executeJavaScript(`
         // Remove any existing listener first to avoid duplicates
-        if (window._commandLHandler) {
-          document.removeEventListener('keydown', window._commandLHandler);
+        if (window._commandKeyHandler) {
+          document.removeEventListener('keydown', window._commandKeyHandler);
         }
         
         // Create a listener that will send a message to the parent window
-        window._commandLHandler = function(e) {
-          if (e.metaKey && e.key.toLowerCase() === 'l') {
+        window._commandKeyHandler = function(e) {
+          if (e.metaKey && (e.key.toLowerCase() === 'l' || e.key.toLowerCase() === 'd')) {
             e.preventDefault();
             e.stopPropagation();
-            window.parent.postMessage({ type: 'command-l-pressed' }, '*');
+            window.parent.postMessage({ 
+              type: e.key.toLowerCase() === 'l' ? 'command-l-pressed' : 'command-d-pressed' 
+            }, '*');
             return false;
           }
         };
         
         // Add the listener to the document
-        document.addEventListener('keydown', window._commandLHandler, true);
+        document.addEventListener('keydown', window._commandKeyHandler, true);
         
         // Also add to any iframes that might be present
         try {
           const frames = document.querySelectorAll('iframe');
           frames.forEach(frame => {
             if (frame.contentDocument) {
-              frame.contentDocument.addEventListener('keydown', window._commandLHandler, true);
+              frame.contentDocument.addEventListener('keydown', window._commandKeyHandler, true);
             }
           });
         } catch(err) {
           console.error('Error adding key handlers to iframes:', err);
         }
 
-        console.log('Command+L handler injected into page');
+        console.log('Command key handlers injected into page');
       `);
     });
 
@@ -474,6 +504,9 @@ class App {
     window.addEventListener("message", (event) => {
       if (event.data && event.data.type === "command-l-pressed") {
         this.startVoicePrompt();
+      }
+      if (event.data && event.data.type === "command-d-pressed") {
+        this.describePageAloud();
       }
     });
   }
@@ -874,6 +907,96 @@ class App {
   logAction(record) {
     // Forward to main via preload
     window.aiBrowser.logAction(record);
+  }
+
+  /**
+   * Describe the current page using text-to-speech
+   */
+  async describePageAloud() {
+    try {
+      // Show status
+      this.statusSpan.innerText = "Getting page description...";
+
+      // Pause any media playing
+      const pausedMediaElements = await this.pauseAllMedia();
+
+      // Cancel any ongoing speech
+      speechSynthesis.cancel();
+
+      // Get page explanation from the API
+      const explanation = await window.aiBrowser.explainPage();
+
+      if (explanation.status !== "ok" || !explanation.explanation) {
+        throw new Error(explanation.error || "Failed to generate explanation");
+      }
+
+      this.statusSpan.innerText = "Speaking page description...";
+
+      // Create a queue of things to speak
+      const speakQueue = [];
+
+      // Add summary
+      if (explanation.explanation.summary) {
+        speakQueue.push("Summary: " + explanation.explanation.summary);
+      }
+
+      // Add content details
+      if (explanation.explanation.contentDetails) {
+        speakQueue.push("Content: " + explanation.explanation.contentDetails);
+      }
+
+      // Add suggested actions
+      if (
+        explanation.explanation.suggestedActions &&
+        explanation.explanation.suggestedActions.length > 0
+      ) {
+        speakQueue.push(
+          "Suggested actions: " +
+            explanation.explanation.suggestedActions.join(". ")
+        );
+      }
+
+      // Speak everything in sequence
+      let currentIndex = 0;
+
+      const speakNext = () => {
+        if (currentIndex < speakQueue.length) {
+          const text = speakQueue[currentIndex];
+          const utterance = new SpeechSynthesisUtterance(text);
+
+          // When this section finishes, speak the next one
+          utterance.onend = () => {
+            currentIndex++;
+            speakNext();
+          };
+
+          // If there's an error, try to continue
+          utterance.onerror = (err) => {
+            console.error("Speech synthesis error:", err);
+            currentIndex++;
+            speakNext();
+          };
+
+          speechSynthesis.speak(utterance);
+        } else {
+          // All done, update status and resume media
+          this.statusSpan.innerText = "Page description complete";
+          setTimeout(() => {
+            this.statusSpan.innerText = "";
+            this.resumeMedia(pausedMediaElements);
+          }, 3000);
+        }
+      };
+
+      // Start speaking
+      speakNext();
+    } catch (err) {
+      console.error("Error describing page:", err);
+      this.statusSpan.innerText = "Error: " + err.message;
+
+      // If there was an error, resume any paused media
+      this.resumeMedia(pausedMediaElements);
+    }
   }
 }
 

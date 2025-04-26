@@ -130,6 +130,25 @@ body {
 #explain-btn:hover {
   background: #2d9249;
 }
+#describe-btn {
+  height: 28px;
+  margin-right: 10px;
+  background: #9c27b0;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+#describe-btn:hover {
+  background: #7B1FA2;
+}
+#describe-btn:active {
+  background: #6A1B9A;
+}
 #status {
   font-size: 12px;
   color: #555;
