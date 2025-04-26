@@ -64,29 +64,90 @@ class PageContentExtractor {
           // Generate a unique selector for an element
           function generateSelector(el) {
             if (!el || el === document || el === document.documentElement) return '';
-            if (el.id) return '#' + el.id;
             
-            // Try to create a selector with tag name and classes
-            let selector = el.tagName.toLowerCase();
-            if (el.className) {
-              const classes = el.className.trim().split(/\\s+/);
-              if (classes.length > 0 && classes[0]) {
-                selector += '.' + classes.join('.');
+            // If element has ID, use it (only if it's a single instance)
+            if (el.id) {
+              const idSelector = '#' + el.id;
+              // Verify uniqueness of ID (in case of duplicate IDs)
+              if (doc.querySelectorAll(idSelector).length === 1) {
+                return idSelector;
               }
             }
             
-            // Check if this is unique enough
-            if (doc.querySelectorAll(selector).length === 1) return selector;
+            // Build a path by walking up the DOM tree
+            const path = [];
+            let current = el;
+            let foundUniqueSelector = false;
             
-            // Add nth-child to make it more specific
-            let parent = el.parentNode;
-            if (parent) {
-              const siblings = Array.from(parent.children);
-              const index = siblings.indexOf(el) + 1;
-              return generateSelector(parent) + ' > ' + selector + ':nth-child(' + index + ')';
+            while (current && current !== document.body && current !== document.documentElement && !foundUniqueSelector) {
+              // Start with tag name
+              let selector = current.tagName.toLowerCase();
+              
+              // Add ID if available (highly specific)
+              if (current.id) {
+                selector += '#' + current.id;
+                foundUniqueSelector = true; // IDs should be unique
+              } else {
+                // Add classes if available
+                if (current.className && typeof current.className === 'string') {
+                  const classes = current.className.trim().split(/\\s+/);
+                  if (classes.length > 0 && classes[0]) {
+                    selector += '.' + classes.join('.');
+                  }
+                }
+                
+                // Always add position among siblings to ensure uniqueness
+                const siblings = Array.from(current.parentNode?.children || []);
+                const similarSiblings = siblings.filter(s => s.tagName === current.tagName);
+                
+                // If there are multiple similar siblings, add nth-of-type
+                if (similarSiblings.length > 1) {
+                  const index = similarSiblings.indexOf(current) + 1;
+                  selector += ':nth-of-type(' + index + ')';
+                }
+              }
+              
+              path.unshift(selector);
+              
+              // Check if the current path selector is unique
+              const testSelector = path.join(' > ');
+              if (doc.querySelectorAll(testSelector).length === 1) {
+                foundUniqueSelector = true;
+                return testSelector;
+              }
+              
+              // Move up to parent
+              current = current.parentNode;
             }
             
-            return selector;
+            // If we've reached the top without a unique selector,
+            // add :nth-child from the root to ensure uniqueness
+            if (!foundUniqueSelector && path.length > 0) {
+              return path.join(' > ');
+            }
+            
+            // Fallback to a very specific path
+            return getFullPath(el);
+          }
+          
+          // Get a very specific path as fallback
+          function getFullPath(el) {
+            const path = [];
+            let current = el;
+            
+            while (current && current !== document.body && current !== document.documentElement) {
+              let selector = current.tagName.toLowerCase();
+              
+              // Always add position to ensure uniqueness
+              const siblings = Array.from(current.parentNode?.children || []);
+              const index = siblings.indexOf(current) + 1;
+              selector += ':nth-child(' + index + ')';
+              
+              path.unshift(selector);
+              current = current.parentNode;
+            }
+            
+            return path.length ? path.join(' > ') : '';
           }
           
           // Get viewport dimensions
