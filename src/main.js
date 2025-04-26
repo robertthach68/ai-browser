@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
@@ -53,6 +53,35 @@ function initialize() {
 
   // Set up IPC handlers
   setupIpcHandlers();
+}
+
+/**
+ * Register global keyboard shortcuts
+ */
+function registerGlobalShortcuts() {
+  // Register Command+L for voice prompt
+  const voicePromptAccelerator =
+    process.platform === "darwin" ? "Command+L" : "Ctrl+L";
+
+  globalShortcut.register(voicePromptAccelerator, () => {
+    console.log("Global shortcut triggered: Voice Prompt");
+    if (mainWindow) {
+      mainWindow.webContents.send("trigger-voice-prompt");
+    }
+  });
+
+  // Register Command+D for page description
+  const describePageAccelerator =
+    process.platform === "darwin" ? "Command+D" : "Ctrl+D";
+
+  globalShortcut.register(describePageAccelerator, () => {
+    console.log("Global shortcut triggered: Describe Page");
+    if (mainWindow) {
+      mainWindow.webContents.send("trigger-describe-page");
+    }
+  });
+
+  console.log("Global shortcuts registered");
 }
 
 /**
@@ -240,6 +269,9 @@ app.whenReady().then(() => {
   initialize();
   createWindow();
 
+  // Register global shortcuts
+  registerGlobalShortcuts();
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -247,4 +279,9 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("will-quit", () => {
+  // Unregister all shortcuts when the app is about to quit
+  globalShortcut.unregisterAll();
 });

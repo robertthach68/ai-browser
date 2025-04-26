@@ -32,4 +32,10 @@ contextBridge.exposeInMainWorld("aiBrowser", {
     ipcRenderer.on("toggle-webview-devtools", () => callback()),
   onBrowserAction: (callback) =>
     ipcRenderer.on("browser-action", (event, data) => callback(data)),
+
+  // Global shortcut events
+  onVoicePromptTriggered: (callback) =>
+    ipcRenderer.on("trigger-voice-prompt", () => callback()),
+  onDescribePageTriggered: (callback) =>
+    ipcRenderer.on("trigger-describe-page", () => callback()),
 });

@@ -389,23 +389,9 @@ class App {
       }
     });
 
-    // Add keyboard shortcuts at document level
+    // Add keyboard shortcuts at document level for browser navigation
     document.addEventListener("keydown", (e) => {
-      // Voice prompt on Command+L always
-      if (e.metaKey && e.key.toLowerCase() === "l") {
-        e.preventDefault();
-        this.startVoicePrompt();
-        return;
-      }
-
-      // Describe page on Command+D
-      if (e.metaKey && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        this.describePageAloud();
-        return;
-      }
-
-      // Only handle other shortcuts when webview is not focused
+      // Only handle shortcuts when webview is not focused
       if (document.activeElement === this.webview) return;
 
       // Ctrl+R or F5 to refresh
@@ -421,92 +407,6 @@ class App {
       // Alt+Right to go forward
       if (e.altKey && e.key === "ArrowRight") {
         this.browserController.goForward();
-      }
-    });
-
-    // Add window-level event listener for command shortcuts to ensure they work globally
-    window.addEventListener(
-      "keydown",
-      (e) => {
-        if (e.metaKey && e.key.toLowerCase() === "l") {
-          e.preventDefault();
-          e.stopPropagation();
-          this.startVoicePrompt();
-        }
-
-        if (e.metaKey && e.key.toLowerCase() === "d") {
-          e.preventDefault();
-          e.stopPropagation();
-          this.describePageAloud();
-        }
-      },
-      true
-    );
-
-    // Ensure Command+L works in webview by handling webview keydown events
-    this.webview.addEventListener("keydown", (e) => {
-      // For Command+L, we need to prevent webview default behavior
-      if (e.metaKey && e.key.toLowerCase() === "l") {
-        this.webview.stop(); // Stop any navigation
-        e.preventDefault();
-        this.startVoicePrompt();
-      }
-
-      // For Command+D, trigger page description
-      if (e.metaKey && e.key.toLowerCase() === "d") {
-        this.webview.stop(); // Stop any navigation
-        e.preventDefault();
-        this.describePageAloud();
-      }
-    });
-
-    // Add listener for webview load to inject key listener directly into the page
-    this.webview.addEventListener("dom-ready", () => {
-      // Inject a script that will forward Command+L to the parent window
-      this.webview.executeJavaScript(`
-        // Remove any existing listener first to avoid duplicates
-        if (window._commandKeyHandler) {
-          document.removeEventListener('keydown', window._commandKeyHandler);
-        }
-        
-        // Create a listener that will send a message to the parent window
-        window._commandKeyHandler = function(e) {
-          if (e.metaKey && (e.key.toLowerCase() === 'l' || e.key.toLowerCase() === 'd')) {
-            e.preventDefault();
-            e.stopPropagation();
-            window.parent.postMessage({ 
-              type: e.key.toLowerCase() === 'l' ? 'command-l-pressed' : 'command-d-pressed' 
-            }, '*');
-            return false;
-          }
-        };
-        
-        // Add the listener to the document
-        document.addEventListener('keydown', window._commandKeyHandler, true);
-        
-        // Also add to any iframes that might be present
-        try {
-          const frames = document.querySelectorAll('iframe');
-          frames.forEach(frame => {
-            if (frame.contentDocument) {
-              frame.contentDocument.addEventListener('keydown', window._commandKeyHandler, true);
-            }
-          });
-        } catch(err) {
-          console.error('Error adding key handlers to iframes:', err);
-        }
-
-        console.log('Command key handlers injected into page');
-      `);
-    });
-
-    // Listen for messages from the webview
-    window.addEventListener("message", (event) => {
-      if (event.data && event.data.type === "command-l-pressed") {
-        this.startVoicePrompt();
-      }
-      if (event.data && event.data.type === "command-d-pressed") {
-        this.describePageAloud();
       }
     });
   }
@@ -553,6 +453,18 @@ class App {
         // Send empty data if there was an error
         await window.aiBrowser.sendPageSnapshot({});
       }
+    });
+
+    // Listen for global shortcut: Voice Prompt (Command+L)
+    window.aiBrowser.onVoicePromptTriggered(() => {
+      console.log("Global shortcut triggered: Voice Prompt");
+      this.startVoicePrompt();
+    });
+
+    // Listen for global shortcut: Describe Page (Command+D)
+    window.aiBrowser.onDescribePageTriggered(() => {
+      console.log("Global shortcut triggered: Describe Page");
+      this.describePageAloud();
     });
   }
 
