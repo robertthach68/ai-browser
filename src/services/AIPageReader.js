@@ -18,7 +18,13 @@ class AIPageReader {
 3. Describe the specific content on the page in detail (e.g., if on YouTube, describe what videos are shown)
 4. Suggest 3-5 actions the user could take on this page
 
-Focus on describing the actual content the user would want to know about (specific videos, articles, products), rather than just the page structure. Be helpful and empathetic.`;
+Focus on describing the actual content the user would want to know about (specific videos, articles, products), rather than just the page structure. Be helpful and empathetic.
+
+Return your response as a JSON object with the following fields:
+- summary: A concise overview of the page
+- mainPurpose: The primary function of this page
+- contentDetails: Detailed description of what content is shown on the page
+- suggestedActions: Array of actions the user could take`;
 
       // Create a concise representation of the page
       const pageContext = {
@@ -67,7 +73,7 @@ Focus on describing the actual content the user would want to know about (specif
       const chat = await this.openai.chat.completions.create({
         model: "gpt-4.1",
         messages: [
-          { role: "developer", content: systemPrompt },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
             content: `Please explain this webpage in a way that's helpful for a visually impaired user:
@@ -80,11 +86,23 @@ Your explanation should include:
 3. Detailed description of the specific content shown (e.g., for YouTube - what videos are shown, their titles, artists, etc.)
 4. 3-5 suggested actions the user could take
 
-Format the response as a JSON object with these properties:
+Return the information in a JSON format with these properties:
 - summary: A concise overview of the page
 - mainPurpose: The primary function of this page
 - contentDetails: Detailed description of what content is shown on the page
 - suggestedActions: Array of actions the user could take
+
+Example format:
+{
+  "summary": "This is the YouTube homepage showing trending videos.",
+  "mainPurpose": "To browse and watch popular YouTube videos",
+  "contentDetails": "The page displays 5 trending videos including 'Tutorial: How to Code', 'Latest News Update', etc.",
+  "suggestedActions": [
+    "Click on the first video to watch it",
+    "Use the search bar to find specific content",
+    "Browse categories in the sidebar"
+  ]
+}
 `,
           },
         ],

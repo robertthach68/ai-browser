@@ -1660,6 +1660,24 @@ class PlanExecutor {
         }
         break;
 
+      case "suggest_action":
+        // Display suggested actions in a popup
+        console.log("Rendering suggested actions:", step.suggestions);
+        this.showSuggestionsPopup(step.suggestions);
+        break;
+
+      case "summary_page":
+        // Display page summary in a popup
+        console.log("Rendering page summary:", step.summary);
+        this.showSummaryPopup(step.summary);
+        break;
+
+      case "describe_content":
+        // Display content description in a popup
+        console.log("Rendering content description:", step.description);
+        this.showContentDescriptionPopup(step.description);
+        break;
+
       default:
         throw new Error("Unknown action: " + action);
     }
@@ -1708,6 +1726,196 @@ class PlanExecutor {
     dialog.appendChild(msg);
     dialog.appendChild(btn);
     overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+  }
+
+  /**
+   * Show suggestions popup
+   * @param {Array<string>} suggestions - List of suggested actions
+   */
+  showSuggestionsPopup(suggestions) {
+    // Create overlay with the same style as explanation popup
+    const overlay = document.createElement("div");
+    overlay.className = "explanation-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "explanation-dialog";
+
+    // Create header
+    const header = document.createElement("div");
+    header.className = "explanation-header";
+
+    const title = document.createElement("h2");
+    title.textContent = "Suggested Actions";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", () => {
+      document.body.removeChild(overlay);
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // Create content
+    const content = document.createElement("div");
+    content.className = "explanation-content";
+
+    const actionsList = document.createElement("div");
+    actionsList.className = "explanation-section";
+
+    // Add each suggestion as a clickable button
+    if (Array.isArray(suggestions) && suggestions.length > 0) {
+      suggestions.forEach((suggestion) => {
+        const actionBtn = document.createElement("button");
+        actionBtn.className = "suggested-action";
+        actionBtn.textContent = suggestion;
+        actionBtn.addEventListener("click", () => {
+          document.getElementById("command-input").value = suggestion;
+          document.body.removeChild(overlay);
+        });
+        actionsList.appendChild(actionBtn);
+      });
+    } else {
+      const message = document.createElement("p");
+      message.textContent = "No suggestions available for this page.";
+      actionsList.appendChild(message);
+    }
+
+    content.appendChild(actionsList);
+
+    // Assemble dialog
+    dialog.appendChild(header);
+    dialog.appendChild(content);
+    overlay.appendChild(dialog);
+
+    // Add to document
+    document.body.appendChild(overlay);
+  }
+
+  /**
+   * Show page summary popup
+   * @param {string} summary - Page summary text
+   */
+  showSummaryPopup(summary) {
+    // Create overlay with the same style as explanation popup
+    const overlay = document.createElement("div");
+    overlay.className = "explanation-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "explanation-dialog";
+
+    // Create header
+    const header = document.createElement("div");
+    header.className = "explanation-header";
+
+    const title = document.createElement("h2");
+    title.textContent = "Page Summary";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", () => {
+      document.body.removeChild(overlay);
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // Create content
+    const content = document.createElement("div");
+    content.className = "explanation-content";
+
+    const summarySection = document.createElement("div");
+    summarySection.className = "explanation-section";
+
+    const summaryText = document.createElement("p");
+    summaryText.textContent = summary;
+    summarySection.appendChild(summaryText);
+
+    // Add read aloud button
+    const readBtn = document.createElement("button");
+    readBtn.textContent = "🔊 Read Aloud";
+    readBtn.className = "suggested-action";
+    readBtn.style.marginTop = "10px";
+    readBtn.addEventListener("click", () => {
+      // Use speech synthesis to read the summary
+      speechSynthesis.cancel(); // Cancel any ongoing speech
+      const utterance = new SpeechSynthesisUtterance(summary);
+      speechSynthesis.speak(utterance);
+    });
+
+    summarySection.appendChild(readBtn);
+    content.appendChild(summarySection);
+
+    // Assemble dialog
+    dialog.appendChild(header);
+    dialog.appendChild(content);
+    overlay.appendChild(dialog);
+
+    // Add to document
+    document.body.appendChild(overlay);
+  }
+
+  /**
+   * Show content description popup
+   * @param {string} description - Content description text
+   */
+  showContentDescriptionPopup(description) {
+    // Create overlay with the same style as explanation popup
+    const overlay = document.createElement("div");
+    overlay.className = "explanation-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "explanation-dialog";
+
+    // Create header
+    const header = document.createElement("div");
+    header.className = "explanation-header";
+
+    const title = document.createElement("h2");
+    title.textContent = "Page Content";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", () => {
+      document.body.removeChild(overlay);
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // Create content
+    const content = document.createElement("div");
+    content.className = "explanation-content";
+
+    const descriptionSection = document.createElement("div");
+    descriptionSection.className = "explanation-section";
+
+    const descriptionText = document.createElement("p");
+    descriptionText.textContent = description;
+    descriptionSection.appendChild(descriptionText);
+
+    // Add read aloud button
+    const readBtn = document.createElement("button");
+    readBtn.textContent = "🔊 Read Aloud";
+    readBtn.className = "suggested-action";
+    readBtn.style.marginTop = "10px";
+    readBtn.addEventListener("click", () => {
+      // Use speech synthesis to read the description
+      speechSynthesis.cancel(); // Cancel any ongoing speech
+      const utterance = new SpeechSynthesisUtterance(description);
+      speechSynthesis.speak(utterance);
+    });
+
+    descriptionSection.appendChild(readBtn);
+    content.appendChild(descriptionSection);
+
+    // Assemble dialog
+    dialog.appendChild(header);
+    dialog.appendChild(content);
+    overlay.appendChild(dialog);
+
+    // Add to document
     document.body.appendChild(overlay);
   }
 }

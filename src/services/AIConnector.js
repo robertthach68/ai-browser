@@ -15,6 +15,28 @@ class AIConnector {
    */
   async generatePlan(command, pageSnapshot = {}) {
     try {
+      // Handle special commands for suggestions, summaries, or descriptions
+      if (
+        command.toLowerCase().includes("suggest") ||
+        command.toLowerCase().includes("what can i do")
+      ) {
+        return await this.generateSuggestedActions(pageSnapshot);
+      }
+
+      if (
+        command.toLowerCase().includes("summarize") ||
+        command.toLowerCase().includes("summary")
+      ) {
+        return await this.generatePageSummary(pageSnapshot);
+      }
+
+      if (
+        command.toLowerCase().includes("describe content") ||
+        command.toLowerCase().includes("what's on this page")
+      ) {
+        return await this.generateContentDescription(pageSnapshot);
+      }
+
       const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a SINGLE action step in JSON format. The step should have 'action', 'selector', and optional 'value' or 'url'.
 
 Allowed actions:
@@ -22,6 +44,9 @@ Allowed actions:
 - click: requires selector parameter 
 - type: requires selector and value parameters
 - scroll: requires value parameter (positive for down, negative for up)
+- suggest_action: provides suggestions based on the page content
+- summary_page: provides a summary of the current page
+- describe_content: provides detailed description of the page content
 
 COMMAND INTERPRETATION RULES:
 1. When the command starts with "click" followed by text (e.g., "click sign in" or "click cry your heart out"), this ALWAYS means the user wants to click on an element containing that text, NOT search for it.
@@ -30,6 +55,9 @@ COMMAND INTERPRETATION RULES:
 4. When the command starts with "search for" or explicitly mentions searching, generate a "type" action for search inputs.
 5. Navigation commands (e.g., "go to youtube") should generate a "navigate" action.
 6. Only use "type" action when the user explicitly wants to input text into a field, not when they want to find and click on content.
+7. When the user asks for suggestions or "what can I do", use the "suggest_action" action.
+8. When the user asks for a summary or to summarize the page, use the "summary_page" action.
+9. When the user asks to describe the content or what's on the page, use the "describe_content" action.
 
 ELEMENT SELECTION PRIORITY:
 1. First try to find elements with exact text matches in their innerText, textContent, title, aria-label, or alt attributes
@@ -246,6 +274,288 @@ Please return a single action in JSON format that best accomplishes this command
       console.error("Error generating action:", error);
       throw error;
     }
+  }
+
+  /**
+   * Generate suggested actions based on the current page
+   * @param {Object} pageSnapshot - The captured page data
+   * @returns {Promise<Object>} Action with suggestions
+   */
+  async generateSuggestedActions(pageSnapshot = {}) {
+    console.log("Generating suggested actions for page");
+
+    try {
+      const pageContext = this.preparePageContext(pageSnapshot);
+
+      const systemPrompt = `You are an AI browser assistant that helps users understand what actions they can take on a webpage.
+      Your task is to analyze the current page and suggest 3-5 specific, actionable things the user could do.
+      Focus on the main interactive elements and common user tasks for this type of page.
+      Be specific to the current page content and what's visible, not generic web browsing advice.
+      
+      IMPORTANT: Return your response as a JSON object with a "suggestions" array containing strings of suggested actions.`;
+
+      const chat = await this.openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is information about the current webpage:
+            
+URL: ${pageContext.url}
+Title: ${pageContext.title}
+
+# Page Structure
+${JSON.stringify(pageContext.headings, null, 2)}
+
+# Interactive Elements
+${JSON.stringify(pageContext.clickableElements?.slice(0, 15), null, 2)}
+
+# Form Elements
+${JSON.stringify(pageContext.formElements, null, 2)}
+
+Based on this information, suggest 3-5 specific actions the user could take on this page.
+Format your response as a JSON object with a "suggestions" array containing strings of suggested actions, focusing on what would be most useful for the user.
+
+You must respond with a valid JSON object. Use this exact format:
+{
+  "suggestions": [
+    "Search for specific content using the search bar",
+    "Click on the login button to access your account",
+    "Filter content by category using the dropdown menu"
+  ]
+}
+`,
+          },
+        ],
+        max_tokens: 500,
+        response_format: { type: "json_object" },
+      });
+
+      const response = JSON.parse(chat.choices[0].message.content);
+
+      // Ensure we have a consistent response format
+      const suggestions =
+        response.suggestions ||
+        response.actions ||
+        response.suggestedActions ||
+        [];
+
+      return {
+        action: "suggest_action",
+        suggestions: Array.isArray(suggestions) ? suggestions : [suggestions],
+      };
+    } catch (error) {
+      console.error("Error generating suggested actions:", error);
+      return {
+        action: "suggest_action",
+        suggestions: ["Error generating suggestions: " + error.message],
+      };
+    }
+  }
+
+  /**
+   * Generate a summary of the current page
+   * @param {Object} pageSnapshot - The captured page data
+   * @returns {Promise<Object>} Action with page summary
+   */
+  async generatePageSummary(pageSnapshot = {}) {
+    console.log("Generating page summary");
+
+    try {
+      const pageContext = this.preparePageContext(pageSnapshot);
+
+      const systemPrompt = `You are an AI browser assistant that provides concise summaries of webpages.
+      Your task is to create a brief, informative summary of what this page is about.
+      Focus on the main purpose of the page and its primary content.
+      Keep your summary to 1-2 sentences that clearly explain what this page is and what it's for.
+      
+      IMPORTANT: Return your response as a JSON object with a "summary" field containing your summary text.`;
+
+      const chat = await this.openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is information about the current webpage:
+            
+URL: ${pageContext.url}
+Title: ${pageContext.title}
+
+# Page Structure
+${JSON.stringify(pageContext.headings, null, 2)}
+
+# Page Content Preview
+${JSON.stringify(pageContext.clickableElements?.slice(0, 10), null, 2)}
+
+Please provide a concise 1-2 sentence summary of what this page is and what it's for.
+You must respond with a valid JSON object. Use this exact format:
+
+{
+  "summary": "This is the YouTube homepage, where users can browse and watch recommended videos across various topics and genres."
+}
+`,
+          },
+        ],
+        max_tokens: 200,
+        response_format: { type: "json_object" },
+      });
+
+      const response = JSON.parse(chat.choices[0].message.content);
+
+      // Ensure we have a consistent response format
+      const summary =
+        response.summary ||
+        response.pageSummary ||
+        response.description ||
+        "This appears to be " + (pageContext.title || "a webpage") + ".";
+
+      return {
+        action: "summary_page",
+        summary,
+      };
+    } catch (error) {
+      console.error("Error generating page summary:", error);
+      return {
+        action: "summary_page",
+        summary: "Error generating summary: " + error.message,
+      };
+    }
+  }
+
+  /**
+   * Generate a detailed description of the page content
+   * @param {Object} pageSnapshot - The captured page data
+   * @returns {Promise<Object>} Action with content description
+   */
+  async generateContentDescription(pageSnapshot = {}) {
+    console.log("Generating content description");
+
+    try {
+      const pageContext = this.preparePageContext(pageSnapshot);
+
+      const systemPrompt = `You are an AI browser assistant that helps users understand what content is on a webpage.
+      Your task is to provide a detailed description of the main content items visible on the page.
+      For example, if it's YouTube, describe the actual videos shown (titles, channels).
+      If it's a news site, describe the specific articles and headlines visible.
+      Focus on the actual content rather than the page structure or navigation elements.
+      
+      IMPORTANT: Return your response as a JSON object with a "description" field containing your detailed content description.`;
+
+      const chat = await this.openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is information about the current webpage:
+            
+URL: ${pageContext.url}
+Title: ${pageContext.title}
+
+# Page Structure
+${JSON.stringify(pageContext.headings, null, 2)}
+
+# Page Content
+${JSON.stringify(pageContext.clickableElements, null, 2)}
+
+Please describe the specific content items visible on this page. For example:
+- If it's YouTube: List several video titles and channels that are visible
+- If it's a news site: List the main headlines and articles
+- If it's a product page: Describe the product details shown
+
+Focus on the actual content the user would be interested in, not the page layout or navigation elements.
+
+You must respond with a valid JSON object. Use this exact format:
+{
+  "description": "Your detailed description of the page content goes here..."
+}
+`,
+          },
+        ],
+        max_tokens: 600,
+        response_format: { type: "json_object" },
+      });
+
+      const response = JSON.parse(chat.choices[0].message.content);
+
+      // Ensure we have a consistent response format
+      const description =
+        response.description ||
+        response.contentDescription ||
+        response.content ||
+        "Unable to describe specific content on this page.";
+
+      return {
+        action: "describe_content",
+        description,
+      };
+    } catch (error) {
+      console.error("Error generating content description:", error);
+      return {
+        action: "describe_content",
+        description: "Error describing content: " + error.message,
+      };
+    }
+  }
+
+  /**
+   * Helper to prepare page context for AI processing
+   * @param {Object} pageSnapshot - The captured page data
+   * @returns {Object} Formatted page context
+   */
+  preparePageContext(pageSnapshot = {}) {
+    const pageContent = pageSnapshot.content || {};
+
+    // Build a structured overview of the page
+    const pageContext = {
+      url: pageSnapshot.url || "about:blank",
+      title: pageSnapshot.title || "",
+    };
+
+    // Include detailed page structure for context
+    if (pageSnapshot.elements) {
+      pageContext.clickableElements = pageSnapshot.elements
+        .filter((el) =>
+          ["a", "button", "input", "div", "span", "img"].includes(el.tag)
+        )
+        .map((el) => ({
+          tag: el.tag,
+          text: el.text || "",
+          id: el.id,
+          classes: el.classes,
+          selector: el.selector,
+          ariaLabel: el.ariaLabel,
+          type: el.type,
+        }))
+        .slice(0, 30);
+
+      pageContext.headings = pageSnapshot.headings || [];
+      pageContext.formElements = pageSnapshot.elements
+        .filter(
+          (el) =>
+            el.tag === "input" || el.tag === "textarea" || el.tag === "select"
+        )
+        .map((el) => ({
+          tag: el.tag,
+          type: el.type || "",
+          id: el.id,
+          name: el.name,
+          placeholder: el.placeholder,
+          selector: el.selector,
+        }))
+        .slice(0, 10);
+    } else {
+      // Fallback to old format if necessary
+      pageContext.a11yTree = pageContent.a11yTree || [];
+      pageContext.availableInputs = pageContent.inputs || [];
+      pageContext.availableLinks = pageContent.links || [];
+      pageContext.headings = pageContent.headings || [];
+      pageContext.buttons = pageContent.buttons || [];
+    }
+
+    return pageContext;
   }
 
   /**
