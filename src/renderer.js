@@ -1592,6 +1592,16 @@ class PlanExecutor {
         this.showContentDescriptionPopup(step.description);
         break;
 
+      case "display_answer":
+        // Display answer to a question in a popup
+        console.log(
+          "Rendering answer to question:",
+          step.question,
+          step.answer
+        );
+        this.showAnswerPopup(step.question, step.answer);
+        break;
+
       default:
         throw new Error("Unknown action: " + action);
     }
@@ -1963,6 +1973,119 @@ class PlanExecutor {
         speechSynthesis.cancel(); // Cancel any ongoing speech
         const utterance = new SpeechSynthesisUtterance(
           "Page Content: " + description
+        );
+        utterance.onend = () => {
+          // Allow media to resume when speech ends
+          // Only if the popup is not visible anymore
+          if (!document.body.contains(overlay)) {
+            this.resumeMediaAsync(pausedMediaElements);
+          }
+        };
+        speechSynthesis.speak(utterance);
+      }, 300);
+    });
+  }
+
+  /**
+   * Show popup with answer to user's question
+   * @param {string} question - The user's question
+   * @param {string} answer - The answer to display
+   */
+  showAnswerPopup(question, answer) {
+    // Create overlay with the same style as explanation popup
+    const overlay = document.createElement("div");
+    overlay.className = "explanation-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "explanation-dialog";
+
+    // Create header
+    const header = document.createElement("div");
+    header.className = "explanation-header";
+
+    const title = document.createElement("h2");
+    title.textContent = "Answer";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", () => {
+      // Stop any ongoing speech when closing
+      speechSynthesis.cancel();
+      document.body.removeChild(overlay);
+      // Resume media when closing
+      this.resumeMediaAsync();
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // Create content
+    const content = document.createElement("div");
+    content.className = "explanation-content";
+
+    const answerSection = document.createElement("div");
+    answerSection.className = "explanation-section";
+
+    // Add question
+    const questionEl = document.createElement("p");
+    questionEl.style.fontWeight = "bold";
+    questionEl.style.marginBottom = "12px";
+    questionEl.textContent = `Q: ${question}`;
+    answerSection.appendChild(questionEl);
+
+    // Add answer
+    const answerEl = document.createElement("p");
+    answerEl.textContent = `A: ${answer}`;
+    answerSection.appendChild(answerEl);
+
+    // Create controls for speech
+    const speechControls = document.createElement("div");
+    speechControls.className = "speech-controls";
+    speechControls.style.margin = "15px 0";
+    speechControls.style.display = "flex";
+    speechControls.style.gap = "10px";
+
+    const pauseResumeBtn = document.createElement("button");
+    pauseResumeBtn.textContent = "🔊 Pause";
+    pauseResumeBtn.className = "suggested-action";
+    pauseResumeBtn.addEventListener("click", () => {
+      if (speechSynthesis.paused) {
+        speechSynthesis.resume();
+        pauseResumeBtn.textContent = "🔊 Pause";
+      } else if (speechSynthesis.speaking) {
+        speechSynthesis.pause();
+        pauseResumeBtn.textContent = "▶️ Resume";
+      }
+    });
+
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = "🛑 Stop";
+    stopBtn.className = "suggested-action";
+    stopBtn.addEventListener("click", () => {
+      speechSynthesis.cancel();
+    });
+
+    speechControls.appendChild(pauseResumeBtn);
+    speechControls.appendChild(stopBtn);
+
+    answerSection.appendChild(speechControls);
+    content.appendChild(answerSection);
+
+    // Assemble dialog
+    dialog.appendChild(header);
+    dialog.appendChild(content);
+    overlay.appendChild(dialog);
+
+    // Add to document
+    document.body.appendChild(overlay);
+
+    // Pause any ongoing media before starting speech
+    this.pauseAllMediaAsync().then((pausedMediaElements) => {
+      // Use speech synthesis to read the answer
+      setTimeout(() => {
+        speechSynthesis.cancel(); // Cancel any ongoing speech
+        const utterance = new SpeechSynthesisUtterance(
+          `Question: ${question}. Answer: ${answer}`
         );
         utterance.onend = () => {
           // Allow media to resume when speech ends

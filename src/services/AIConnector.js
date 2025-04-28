@@ -40,6 +40,23 @@ class AIConnector {
       return "navigate";
     }
 
+    // Check if the command is a question
+    if (
+      lowerCommand.includes("?") ||
+      lowerCommand.startsWith("what") ||
+      lowerCommand.startsWith("who") ||
+      lowerCommand.startsWith("where") ||
+      lowerCommand.startsWith("when") ||
+      lowerCommand.startsWith("why") ||
+      lowerCommand.startsWith("how") ||
+      lowerCommand.startsWith("can") ||
+      lowerCommand.startsWith("does") ||
+      lowerCommand.startsWith("is") ||
+      lowerCommand.startsWith("are")
+    ) {
+      return "answer_question";
+    }
+
     return null;
   }
 
@@ -58,6 +75,8 @@ class AIConnector {
         return await this.generatePageSummary(pageSnapshot);
       case "describe_content":
         return await this.generateContentDescription(pageSnapshot);
+      case "answer_question":
+        return await this.generateQuestionAnswer(command, pageSnapshot);
       case "navigate":
         // Simple navigation without page info
         if (!pageSnapshot.url) {
@@ -88,6 +107,7 @@ Allowed actions:
 - suggest_action: provides suggestions based on the page content
 - summary_page: provides a summary of the current page
 - describe_content: provides detailed description of the page content
+- display_answer: provides answer to a question based on page content
 
 COMMAND INTERPRETATION RULES:
 1. When the command starts with "click" followed by text (e.g., "click sign in" or "click cry your heart out"), this ALWAYS means the user wants to click on an element containing that text, NOT search for it.
@@ -99,6 +119,7 @@ COMMAND INTERPRETATION RULES:
 7. When the user asks for suggestions or "what can I do", use the "suggest_action" action.
 8. When the user asks for a summary or to summarize the page, use the "summary_page" action.
 9. When the user asks to describe the content or what's on the page, use the "describe_content" action.
+10. When the user asks a question about the page content (like "who is the author of this article?"), use the "display_answer" action.
 
 ELEMENT SELECTION PRIORITY:
 1. First try to find elements with exact text matches in their innerText, textContent, title, aria-label, or alt attributes
@@ -676,6 +697,89 @@ You must respond with a valid JSON object. Use this exact format:
 
     // Default to a search if we can't parse it
     return `https://www.google.com/search?q=${encodeURIComponent(command)}`;
+  }
+
+  /**
+   * Generate an answer to a user question based on page content
+   * @param {string} question - The user's question
+   * @param {Object} pageSnapshot - The captured page data
+   * @returns {Promise<Object>} Action with answer
+   */
+  async generateQuestionAnswer(question, pageSnapshot = {}) {
+    console.log("Generating answer to question:", question);
+
+    try {
+      const pageContext = this.preparePageContext(pageSnapshot);
+
+      const systemPrompt = `You are an AI browser assistant that answers questions about webpage content.
+      Your task is to provide a clear, accurate, and concise answer to the user's question based on the content visible on the current page.
+      Focus on extracting relevant information from the page context provided.
+      If the answer cannot be determined from the available information, acknowledge that and suggest what might help.
+      
+      IMPORTANT: Return your response as a JSON object with an "answer" field containing your answer to the question.`;
+
+      const chat = await this.openai.chat.completions.create({
+        model: "gpt-4.1",
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Here is information about the current webpage:
+            
+URL: ${pageContext.url}
+Title: ${pageContext.title}
+
+# Page Structure
+${JSON.stringify(pageContext.headings, null, 2)}
+
+# Page Content
+${JSON.stringify(pageContext.clickableElements, null, 2)}
+
+The user has asked the following question:
+"${question}"
+
+Please provide a clear and concise answer based on the page content shown above.
+If you cannot answer based on the available information, explain what information is missing.
+
+You must respond with a valid JSON object. Use this exact format:
+{
+  "answer": "Your detailed answer to the question goes here..."
+}
+`,
+          },
+        ],
+        max_tokens: 800,
+        response_format: { type: "json_object" },
+      });
+
+      let response;
+      try {
+        response = JSON.parse(chat.choices[0].message.content);
+      } catch (parseError) {
+        console.error("Error parsing JSON response:", parseError);
+        response = {};
+      }
+
+      // Ensure we have a consistent response format
+      const answer =
+        response.answer ||
+        response.response ||
+        response.content ||
+        "I'm unable to answer this question based on the current page content.";
+
+      return {
+        action: "display_answer",
+        answer,
+        question,
+      };
+    } catch (error) {
+      console.error("Error generating question answer:", error);
+      return {
+        action: "display_answer",
+        answer: "Error answering question: " + error.message,
+        question,
+      };
+    }
   }
 }
 
