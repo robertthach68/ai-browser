@@ -8,36 +8,77 @@ class AIConnector {
   }
 
   /**
-   * Generate a single action based on a command and page snapshot
+   * Determine if command matches specific action keywords
    * @param {string} command - The user command
-   * @param {Object} pageSnapshot - The captured page data
-   * @returns {Promise<Object>} A single action step
+   * @returns {string|null} Action type or null if no match
    */
-  async generatePlan(command, pageSnapshot = {}) {
-    try {
-      // Handle special commands for suggestions, summaries, or descriptions
-      if (
-        command.toLowerCase().includes("suggest") ||
-        command.toLowerCase().includes("what can i do")
-      ) {
+  determineCommandIntent(command) {
+    const lowerCommand = command.toLowerCase();
+
+    if (
+      lowerCommand.includes("suggest") ||
+      lowerCommand.includes("what can i do")
+    ) {
+      return "suggest_action";
+    }
+
+    if (
+      lowerCommand.includes("summarize") ||
+      lowerCommand.includes("summary")
+    ) {
+      return "summary_page";
+    }
+
+    if (
+      lowerCommand.includes("describe content") ||
+      lowerCommand.includes("what's on this page")
+    ) {
+      return "describe_content";
+    }
+
+    if (lowerCommand.includes("go to")) {
+      return "navigate";
+    }
+
+    return null;
+  }
+
+  /**
+   * Execute action based on command intent and page snapshot
+   * @param {string} intentAction - The determined action intent
+   * @param {Object} pageSnapshot - The page snapshot data
+   * @param {string} command - The original command
+   * @returns {Promise<Object>} Action object
+   */
+  async executeCommandIntent(intentAction, pageSnapshot, command) {
+    switch (intentAction) {
+      case "suggest_action":
         return await this.generateSuggestedActions(pageSnapshot);
-      }
-
-      if (
-        command.toLowerCase().includes("summarize") ||
-        command.toLowerCase().includes("summary")
-      ) {
+      case "summary_page":
         return await this.generatePageSummary(pageSnapshot);
-      }
-
-      if (
-        command.toLowerCase().includes("describe content") ||
-        command.toLowerCase().includes("what's on this page")
-      ) {
+      case "describe_content":
         return await this.generateContentDescription(pageSnapshot);
-      }
+      case "navigate":
+        // Simple navigation without page info
+        if (!pageSnapshot.url) {
+          const targetUrl = this.extractUrlFromCommand(command);
+          console.log(`Creating a simple navigation step to ${targetUrl}`);
+          return {
+            action: "navigate",
+            url: targetUrl,
+          };
+        }
+        break;
+    }
+    return null;
+  }
 
-      const systemPrompt = `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a SINGLE action step in JSON format. The step should have 'action', 'selector', and optional 'value' or 'url'.
+  /**
+   * Get system prompt for AI
+   * @returns {string} The system prompt for the AI
+   */
+  getSystemPrompt() {
+    return `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a SINGLE action step in JSON format. The step should have 'action', 'selector', and optional 'value' or 'url'.
 
 Allowed actions:
 - navigate: requires url parameter
@@ -66,115 +107,84 @@ ELEMENT SELECTION PRIORITY:
 
 For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed. For accessibility, also consider using XPath selectors when appropriate.
 
-IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.
-`;
+IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.`;
+  }
 
-      // If we don't have page info, create a simple navigation action
-      if (!pageSnapshot.url && command.toLowerCase().includes("go to")) {
-        const targetUrl = this.extractUrlFromCommand(command);
-        console.log(`Creating a simple navigation step to ${targetUrl}`);
-        return {
-          action: "navigate",
-          url: targetUrl,
-        };
+  /**
+   * Prepare YouTube-specific element info
+   * @param {Object} el - The element
+   * @param {boolean} isYouTube - Whether the page is YouTube
+   * @returns {Object} Enhanced element info
+   */
+  prepareElementInfo(el, isYouTube) {
+    // Basic element properties
+    const elementInfo = {
+      tag: el.tag,
+      text: el.text || "",
+      id: el.id,
+      classes: el.classes,
+      selector: el.selector,
+      ariaLabel: el.ariaLabel,
+      type: el.type,
+    };
+
+    // Add special handling for YouTube videos
+    if (isYouTube) {
+      // Check if this element is likely a video title/thumbnail
+      const isVideoElement =
+        (el.classes &&
+          (el.classes.some(
+            (c) =>
+              c.includes("video") ||
+              c.includes("title") ||
+              c.includes("thumbnail")
+          ) ||
+            (el.text && el.tag === "a"))) ||
+        (el.ariaLabel &&
+          (el.ariaLabel.includes("video") || el.ariaLabel.includes("watch")));
+
+      if (isVideoElement) {
+        elementInfo.isVideoElement = true;
       }
+    }
 
-      // Create a concise representation of the page with defensive programming
-      const pageContent = pageSnapshot.content || {};
+    return elementInfo;
+  }
 
-      // Build a structured overview of the page
-      const pageContext = {
-        url: pageSnapshot.url || "about:blank",
-        title: pageSnapshot.title || "",
-      };
+  /**
+   * Prepare context from page snapshot
+   * @param {Object} pageSnapshot - The page snapshot data
+   * @returns {Object} Prepared context for the AI
+   */
+  prepareAIContext(pageSnapshot) {
+    // Use the existing preparePageContext method for consistency
+    const pageContext = this.preparePageContext(pageSnapshot);
 
-      // Include more detailed page structure information for better context
-      if (pageSnapshot.elements) {
-        // Check if we're on YouTube to add special handling
-        const isYouTube = pageContext.url.includes("youtube.com");
+    // If we need YouTube-specific enhancements for clickable elements
+    if (pageSnapshot.elements && pageContext.clickableElements) {
+      const isYouTube = pageContext.url.includes("youtube.com");
 
-        // Structure elements by type for easier reference
-        pageContext.clickableElements = pageSnapshot.elements
-          .filter((el) =>
-            ["a", "button", "input", "div", "span", "img"].includes(el.tag)
-          )
-          .map((el) => {
-            // Basic element properties
-            const elementInfo = {
-              tag: el.tag,
-              text: el.text || "",
-              id: el.id,
-              classes: el.classes,
-              selector: el.selector,
-              ariaLabel: el.ariaLabel,
-              type: el.type,
-            };
+      // Replace the clickable elements with enhanced versions that include YouTube-specific flags
+      pageContext.clickableElements = pageSnapshot.elements
+        .filter((el) =>
+          ["a", "button", "input", "div", "span", "img"].includes(el.tag)
+        )
+        .map((el) => this.prepareElementInfo(el, isYouTube))
+        .slice(0, 30);
+    }
 
-            // Add special handling for YouTube videos
-            if (isYouTube) {
-              // Check if this element is likely a video title/thumbnail
-              const isVideoElement =
-                (el.classes &&
-                  (el.classes.some(
-                    (c) =>
-                      c.includes("video") ||
-                      c.includes("title") ||
-                      c.includes("thumbnail")
-                  ) ||
-                    (el.text && el.tag === "a"))) ||
-                (el.ariaLabel &&
-                  (el.ariaLabel.includes("video") ||
-                    el.ariaLabel.includes("watch")));
+    return pageContext;
+  }
 
-              if (isVideoElement) {
-                elementInfo.isVideoElement = true;
-              }
-            }
-
-            return elementInfo;
-          })
-          .slice(0, 30); // Increase limit to capture more elements
-
-        // Add specific section for headings and form elements
-        pageContext.headings = pageSnapshot.headings || [];
-        pageContext.formElements = pageSnapshot.elements
-          .filter(
-            (el) =>
-              el.tag === "input" || el.tag === "textarea" || el.tag === "select"
-          )
-          .map((el) => ({
-            tag: el.tag,
-            type: el.type || "",
-            id: el.id,
-            name: el.name,
-            placeholder: el.placeholder,
-            selector: el.selector,
-          }))
-          .slice(0, 10);
-      } else {
-        // Fallback to old format if necessary
-        pageContext.a11yTree = pageContent.a11yTree || [];
-        pageContext.availableInputs = pageContent.inputs || [];
-        pageContext.availableLinks = pageContent.links || [];
-        pageContext.headings = pageContent.headings || [];
-        pageContext.buttons = pageContent.buttons || [];
-      }
-
-      // Add first 500 chars of page text for context
-      const pageText = pageContent.text
-        ? `Page text snippet: ${pageContent.text.substring(0, 500)}...`
-        : "No page text available";
-
-      console.log("Sending command to OpenAI:", command);
-      console.log("Page context URL:", pageContext.url);
-
-      const chat = await this.openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          { role: "developer", content: systemPrompt },
-          {
-            role: "user",
-            content: `Command: ${command}
+  /**
+   * Generate user message content for the AI
+   * @param {string} command - The user command
+   * @param {Object} pageContext - The prepared page context
+   * @param {string} pageText - The page text
+   * @returns {string} The user message content
+   */
+  generateUserMessageContent(command, pageContext, pageText) {
+    return `Command: ${command}
 
 Current page: ${JSON.stringify(pageContext, null, 2)}
 
@@ -209,76 +219,139 @@ ${
       }`
 }
 
-Please return a single action in JSON format that best accomplishes this command on the current page.`,
-          },
-        ],
-        max_tokens: 500,
-        response_format: { type: "json_object" },
-      });
+Please return a single action in JSON format that best accomplishes this command on the current page.`;
+  }
 
+  /**
+   * Make API call to OpenAI
+   * @param {string} command - The user command
+   * @param {Object} pageContext - The prepared page context
+   * @param {string} pageText - The page text
+   * @returns {Promise<Object>} The response from OpenAI
+   */
+  async callOpenAI(command, pageContext, pageText) {
+    const systemPrompt = this.getSystemPrompt();
+    const userContent = this.generateUserMessageContent(
+      command,
+      pageContext,
+      pageText
+    );
+
+    console.log("Sending command to OpenAI:", command);
+    console.log("Page context URL:", pageContext.url);
+
+    return await this.openai.chat.completions.create({
+      model: "gpt-4.1",
+      messages: [
+        { role: "developer", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: 500,
+      response_format: { type: "json_object" },
+    });
+  }
+
+  /**
+   * Process response from OpenAI
+   * @param {string} responseContent - The response content
+   * @param {Object} pageSnapshot - The page snapshot data
+   * @returns {Promise<Object>} The processed action
+   */
+  async processOpenAIResponse(responseContent, pageSnapshot) {
+    try {
+      // Parse the JSON response
+      const parsedResponse = JSON.parse(responseContent);
+
+      // Check if the response action is for content description or summary
+      if (parsedResponse.action === "describe_content") {
+        return await this.generateContentDescription(pageSnapshot);
+      }
+
+      if (parsedResponse.action === "summary_page") {
+        return await this.generatePageSummary(pageSnapshot);
+      }
+
+      // If we got a single action object, return it directly
+      if (parsedResponse.action && typeof parsedResponse.action === "string") {
+        return parsedResponse;
+      }
+
+      // If we got a steps array, just return the first item
+      if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
+        return parsedResponse[0];
+      }
+
+      // Handle the case where action is nested inside a property
+      if (
+        parsedResponse.steps &&
+        Array.isArray(parsedResponse.steps) &&
+        parsedResponse.steps.length > 0
+      ) {
+        return parsedResponse.steps[0];
+      }
+
+      if (
+        parsedResponse.actions &&
+        Array.isArray(parsedResponse.actions) &&
+        parsedResponse.actions.length > 0
+      ) {
+        return parsedResponse.actions[0];
+      }
+
+      if (
+        parsedResponse.plan &&
+        Array.isArray(parsedResponse.plan) &&
+        parsedResponse.plan.length > 0
+      ) {
+        return parsedResponse.plan[0];
+      }
+
+      throw new Error("No valid action found in AI response");
+    } catch (err) {
+      throw new Error(
+        "Failed to parse action JSON: " +
+          err.message +
+          ". Content: " +
+          responseContent
+      );
+    }
+  }
+
+  /**
+   * Generate a single action based on a command and page snapshot
+   * @param {string} command - The user command
+   * @param {Object} pageSnapshot - The captured page data
+   * @returns {Promise<Object>} A single action step
+   */
+  async generatePlan(command, pageSnapshot = {}) {
+    try {
+      // Step 1: Check for specific command intents first
+      const commandIntent = this.determineCommandIntent(command);
+      if (commandIntent) {
+        const intentResult = await this.executeCommandIntent(
+          commandIntent,
+          pageSnapshot,
+          command
+        );
+        if (intentResult) {
+          return intentResult;
+        }
+      }
+
+      // Step 2: Prepare the page context and text
+      const pageContext = this.prepareAIContext(pageSnapshot);
+      const pageContent = pageSnapshot.content || {};
+      const pageText = pageContent.text
+        ? `Page text snippet: ${pageContent.text.substring(0, 500)}...`
+        : "No page text available";
+
+      // Step 3: Call OpenAI API
+      const chat = await this.callOpenAI(command, pageContext, pageText);
       const responseContent = chat.choices[0].message.content;
       console.log("Response content:", responseContent);
 
-      try {
-        // Parse the JSON response
-        const parsedResponse = JSON.parse(responseContent);
-
-        // Check if the response action is for content description or summary
-        if (parsedResponse.action === "describe_content") {
-          return await this.generateContentDescription(pageSnapshot);
-        }
-
-        if (parsedResponse.action === "summary_page") {
-          return await this.generatePageSummary(pageSnapshot);
-        }
-
-        // If we got a single action object, return it directly
-        if (
-          parsedResponse.action &&
-          typeof parsedResponse.action === "string"
-        ) {
-          return parsedResponse;
-        }
-
-        // If we got a steps array, just return the first item
-        if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
-          return parsedResponse[0];
-        }
-
-        // Handle the case where action is nested inside a property
-        if (
-          parsedResponse.steps &&
-          Array.isArray(parsedResponse.steps) &&
-          parsedResponse.steps.length > 0
-        ) {
-          return parsedResponse.steps[0];
-        }
-
-        if (
-          parsedResponse.actions &&
-          Array.isArray(parsedResponse.actions) &&
-          parsedResponse.actions.length > 0
-        ) {
-          return parsedResponse.actions[0];
-        }
-
-        if (
-          parsedResponse.plan &&
-          Array.isArray(parsedResponse.plan) &&
-          parsedResponse.plan.length > 0
-        ) {
-          return parsedResponse.plan[0];
-        }
-
-        throw new Error("No valid action found in AI response");
-      } catch (err) {
-        throw new Error(
-          "Failed to parse action JSON: " +
-            err.message +
-            ". Content: " +
-            responseContent
-        );
-      }
+      // Step 4: Process the API response
+      return await this.processOpenAIResponse(responseContent, pageSnapshot);
     } catch (error) {
       console.error("Error generating action:", error);
       throw error;
