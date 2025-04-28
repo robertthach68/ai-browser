@@ -223,6 +223,15 @@ Please return a single action in JSON format that best accomplishes this command
         // Parse the JSON response
         const parsedResponse = JSON.parse(responseContent);
 
+        // Check if the response action is for content description or summary
+        if (parsedResponse.action === "describe_content") {
+          return await this.generateContentDescription(pageSnapshot);
+        }
+
+        if (parsedResponse.action === "summary_page") {
+          return await this.generatePageSummary(pageSnapshot);
+        }
+
         // If we got a single action object, return it directly
         if (
           parsedResponse.action &&
