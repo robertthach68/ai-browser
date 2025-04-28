@@ -580,13 +580,16 @@ You must respond with a valid JSON object. Use this exact format:
         return site;
       }
 
-      // Check if it contains a TLD
-      if (site.includes(".")) {
-        return `https://${site}`;
+      // Clean up the site name - remove any trailing periods
+      const cleanSite = site.replace(/\.+$/, "");
+
+      // Check if it contains a TLD (dots between characters)
+      if (cleanSite.includes(".") && !cleanSite.endsWith(".")) {
+        return `https://${cleanSite}`;
       }
 
       // Otherwise assume it's a well-known site
-      return `https://www.${site}.com`;
+      return `https://www.${cleanSite}.com`;
     }
 
     // Default to a search if we can't parse it
