@@ -346,19 +346,6 @@ Please return a single action in JSON format that best accomplishes this command
    */
   async generatePlan(command, pageSnapshot = {}) {
     try {
-      // Step 1: Check for specific command intents first
-      const commandIntent = this.determineCommandIntent(command);
-      if (commandIntent) {
-        const intentResult = await this.executeCommandIntent(
-          commandIntent,
-          pageSnapshot,
-          command
-        );
-        if (intentResult) {
-          return intentResult;
-        }
-      }
-
       // Step 2: Prepare the page context and text
       const pageContext = this.prepareAIContext(pageSnapshot);
       const pageContent = pageSnapshot.content || {};
