@@ -15,38 +15,102 @@ class PageContentExtractor {
   }
 
   /**
-   * Capture a snapshot of the current page
-   * @returns {Promise<Object>} Page snapshot data
+   * Captures a snapshot of the current page
+   * @returns {Promise<Object>} The page snapshot data
    */
   async capturePageSnapshot() {
     try {
-      // Capture basic page information
+      console.log("Starting page snapshot capture");
       const url = await this.webview.getURL();
+
+      // Check if page is loaded
+      if (!url || url === "about:blank") {
+        console.warn("Page not loaded or blank page");
+        return { error: "Page not loaded", ...this.createEmptyContentData() };
+      }
+
       const title = await this.webview.getTitle();
+      console.log(`Capturing page snapshot for: "${title}" at ${url}`);
 
-      // Extract detailed page content via JavaScript
-      const content = await this.executeContentExtraction();
+      // Execute content extraction with proper error handling
+      let contentData;
+      let textContent = "";
 
-      console.log("Successfully captured page content");
-      return {
+      try {
+        contentData = await this.executeContentExtraction();
+        textContent = await this.extractPageTextContent();
+
+        // Verify we have some data
+        const hasViewport =
+          contentData?.viewport?.width > 0 || contentData?.viewport?.height > 0;
+        const hasHeadings =
+          Array.isArray(contentData?.headings) &&
+          contentData.headings.length > 0;
+        const hasElements =
+          Array.isArray(contentData?.elements) &&
+          contentData.elements.length > 0;
+
+        console.log(
+          `Extraction results: hasViewport=${hasViewport}, headings=${
+            contentData?.headings?.length || 0
+          }, elements=${
+            contentData?.elements?.length || 0
+          }, textContent length=${textContent.length}`
+        );
+
+        if (!hasViewport && !hasHeadings && !hasElements) {
+          console.warn(
+            "Content extraction returned empty data, trying one more time with robust extraction"
+          );
+          // Try one more time with robust extraction as a last resort
+          const robustResult = await this.executeRobustExtraction();
+          contentData = robustResult;
+          textContent = robustResult.textContent || "";
+        }
+      } catch (extractionError) {
+        console.error(`Content extraction failed: ${extractionError.message}`);
+        // Create minimal content data as a fallback
+        contentData = this.createEmptyContentData();
+        textContent = "";
+      }
+
+      // Ensure contentData is not null/undefined
+      if (!contentData) {
+        console.warn("Content data is null or undefined after extraction");
+        contentData = this.createEmptyContentData();
+        textContent = "";
+      }
+
+      // Create the page snapshot
+      const snapshot = {
         url,
-        title,
-        viewport: content.viewport,
-        headings: content.headings,
-        elements: content.elements,
-        forms: content.forms,
-        history: content.history || [], // Default to empty array if not provided
+        title: title || url,
+        viewport: contentData.viewport,
+        headings: contentData.headings || [],
+        elements: contentData.elements || [],
+        forms: contentData.forms || [],
+        history: contentData.history || [],
+        textContent: textContent,
       };
+
+      console.log(
+        `Page snapshot captured successfully for ${url} with ${snapshot.headings.length} headings, ${snapshot.elements.length} elements, and ${snapshot.textContent.length} chars of text`
+      );
+
+      return snapshot;
     } catch (error) {
-      console.error("Error capturing page snapshot:", error);
+      console.error(`Error capturing page snapshot: ${error.message}`);
+      // Return minimal data instead of null
+      const emptyContent = this.createEmptyContentData();
       return {
-        url: "",
-        title: "",
-        viewport: { width: 0, height: 0 },
-        headings: [],
-        elements: [],
-        forms: [],
-        history: [],
+        url: (await this.webview.getURL()) || "unknown",
+        title: (await this.webview.getTitle()) || "Unknown Page",
+        viewport: emptyContent.viewport,
+        headings: emptyContent.headings,
+        elements: emptyContent.elements,
+        forms: emptyContent.forms,
+        history: emptyContent.history,
+        textContent: emptyContent.textContent,
       };
     }
   }
@@ -248,6 +312,211 @@ class PageContentExtractor {
         }
       })();
     `);
+  }
+
+  /**
+   * Extract text content from all elements in the document body
+   * @returns {Promise<string>} Concatenated text content
+   */
+  async extractPageTextContent() {
+    try {
+      return await this.webview.executeJavaScript(`
+        (function() {
+          try {
+            // Function to recursively extract text from an element and its children
+            function extractTextFromNode(node) {
+              let text = '';
+              
+              // Skip script, style, and hidden elements
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                const style = window.getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden') {
+                  return '';
+                }
+                
+                if (node.tagName === 'SCRIPT' || node.tagName === 'STYLE' || node.tagName === 'NOSCRIPT') {
+                  return '';
+                }
+              }
+              
+              // Extract text content
+              if (node.nodeType === Node.TEXT_NODE) {
+                const trimmedText = node.textContent.trim();
+                if (trimmedText) {
+                  text += trimmedText + ' ';
+                }
+              } else if (node.nodeType === Node.ELEMENT_NODE) {
+                // For inputs and images, capture their accessible text
+                if (node.tagName === 'INPUT' && node.type !== 'hidden') {
+                  if (node.value) text += node.value + ' ';
+                  if (node.placeholder) text += node.placeholder + ' ';
+                } else if (node.tagName === 'IMG') {
+                  if (node.alt) text += node.alt + ' ';
+                }
+                
+                // Recursively process child nodes
+                for (const child of node.childNodes) {
+                  text += extractTextFromNode(child);
+                }
+                
+                // Add an extra space after block-level elements
+                if (['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI'].includes(node.tagName)) {
+                  text += ' ';
+                }
+              }
+              
+              return text;
+            }
+            
+            // Start extraction from body
+            const extractedText = extractTextFromNode(document.body);
+            
+            // Clean up double spaces and trim
+            const cleanedText = extractedText.replace(/\\s+/g, ' ').trim();
+            
+            console.log("Extracted text content length:", cleanedText.length);
+            return cleanedText;
+          } catch (err) {
+            console.error("Error extracting page text content:", err);
+            return "";
+          }
+        })();
+      `);
+    } catch (error) {
+      console.error("Error in extractPageTextContent:", error);
+      return "";
+    }
+  }
+
+  /**
+   * Execute robust fallback extraction for problematic pages
+   * @returns {Promise<Object>} Extracted content
+   */
+  async executeRobustExtraction() {
+    try {
+      console.log("Executing robust extraction");
+
+      // Get basic page information
+      const url = await this.webview.getURL();
+      const title = await this.webview.getTitle();
+
+      // Extract text content
+      const textContent = await this.extractPageTextContent();
+
+      // Use a simplified extraction method for basic content
+      const result = await this.webview.executeJavaScript(`
+        (function() {
+          try {
+            // Get viewport dimensions
+            const viewport = {
+              width: window.innerWidth || document.documentElement.clientWidth || 800,
+              height: window.innerHeight || document.documentElement.clientHeight || 600
+            };
+            
+            // Simple extraction of headings
+            const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+              .filter(el => {
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden';
+              })
+              .map(h => ({
+                level: parseInt(h.tagName[1]),
+                text: h.textContent.trim(),
+                selector: h.id ? '#' + h.id : h.tagName.toLowerCase()
+              }));
+            
+            // Simple extraction of elements
+            const elements = Array.from(document.querySelectorAll('a, button, input, select'))
+              .filter(el => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== 'none' && 
+                       style.visibility !== 'hidden' && 
+                       rect.width > 0 && 
+                       rect.height > 0;
+              })
+              .map(el => ({
+                tag: el.tagName.toLowerCase(),
+                type: el.type || '',
+                text: (el.textContent || el.value || '').trim(),
+                url: el.href || '',
+                id: el.id || '',
+                classes: el.className ? el.className.split(/\\s+/) : [],
+                selector: el.id ? '#' + el.id : el.tagName.toLowerCase()
+              }));
+            
+            // Simple extraction of forms
+            const forms = Array.from(document.querySelectorAll('form'))
+              .map(form => ({
+                id: form.id || '',
+                action: form.action || '',
+                selector: form.id ? '#' + form.id : 'form',
+                fields: Array.from(form.querySelectorAll('input, select, textarea'))
+                  .map(input => ({
+                    name: input.name || '',
+                    type: input.type || '',
+                    selector: input.id ? '#' + input.id : input.tagName.toLowerCase()
+                  }))
+              }));
+            
+            return {
+              viewport,
+              headings,
+              elements,
+              forms,
+              history: []
+            };
+          } catch (e) {
+            console.error("Error in robust extraction:", e.message);
+            return {
+              viewport: { width: 800, height: 600 },
+              headings: [],
+              elements: [],
+              forms: [],
+              history: []
+            };
+          }
+        })();
+      `);
+
+      return {
+        url,
+        title,
+        viewport: result.viewport,
+        headings: result.headings,
+        elements: result.elements,
+        forms: result.forms,
+        history: [],
+        textContent,
+      };
+    } catch (error) {
+      console.error("Error in robust extraction:", error);
+      return {
+        url: (await this.webview.getURL()) || "",
+        title: (await this.webview.getTitle()) || "",
+        viewport: { width: 800, height: 600 },
+        headings: [],
+        elements: [],
+        forms: [],
+        history: [],
+        textContent: "",
+      };
+    }
+  }
+
+  /**
+   * Creates empty content data as a fallback
+   * @returns {Object} Empty content data structure
+   */
+  createEmptyContentData() {
+    return {
+      viewport: { width: 800, height: 600 },
+      headings: [],
+      elements: [],
+      forms: [],
+      history: [],
+      textContent: "",
+    };
   }
 }
 
