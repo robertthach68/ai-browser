@@ -330,7 +330,7 @@ Please return a single action in JSON format that best accomplishes this command
   }
 
   /**
-   * Process response from OpenAI
+   * Process response from OpenAI and route to appropriate handler
    * @param {string} responseContent - The response content
    * @param {Object} pageSnapshot - The page snapshot data
    * @returns {Promise<Object>} The processed action
@@ -340,104 +340,72 @@ Please return a single action in JSON format that best accomplishes this command
       // Parse the JSON response
       const parsedResponse = JSON.parse(responseContent);
 
-      // Define allowed actions and their required parameters
-      const allowedActions = {
-        navigate: { required: ["url"] },
-        click: { required: ["selector"] },
-        type: { required: ["selector", "value"] },
-        scroll: { required: ["value"] },
-        suggest_action: { required: ["suggestions"] },
-        summary_page: { required: ["summary"] },
-        describe_content: { required: ["description"] },
-        display_answer: { required: ["question", "answer"] },
-      };
-
-      // Validate the action
+      // Validate that we have an action
       if (!parsedResponse.action) {
         throw new Error("Response missing 'action' property");
       }
 
       const action = parsedResponse.action;
-      if (!allowedActions[action]) {
-        throw new Error(
-          `Invalid action: ${action}. Allowed actions are: ${Object.keys(
-            allowedActions
-          ).join(", ")}`
-        );
-      }
 
-      // Check for required parameters
-      const requiredParams = allowedActions[action].required;
-      const missingParams = requiredParams.filter(
-        (param) => !parsedResponse[param]
-      );
+      // Route to appropriate handler based on action
+      switch (action) {
+        case "describe_content":
+          return await this.generateContentDescription(pageSnapshot);
 
-      if (missingParams.length > 0) {
-        throw new Error(
-          `Missing required parameters for action '${action}': ${missingParams.join(
-            ", "
-          )}`
-        );
-      }
+        case "summary_page":
+          return await this.generatePageSummary(pageSnapshot);
 
-      // Handle special cases for content-related actions
-      if (action === "describe_content") {
-        return await this.generateContentDescription(pageSnapshot);
-      }
-
-      if (action === "summary_page") {
-        return await this.generatePageSummary(pageSnapshot);
-      }
-
-      if (action === "display_answer") {
-        return await this.generateQuestionAnswer(
-          parsedResponse.question,
-          pageSnapshot
-        );
-      }
-
-      // For navigation actions, ensure URL is properly formatted
-      if (action === "navigate") {
-        const url = parsedResponse.url;
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-          parsedResponse.url = `https://${url}`;
-        }
-      }
-
-      // For click actions, ensure selector is valid
-      if (action === "click") {
-        const selector = parsedResponse.selector;
-        if (selector.includes(":contains(")) {
-          throw new Error(
-            "Invalid selector: ':contains()' is not a valid CSS selector"
+        case "display_answer":
+          return await this.generateQuestionAnswer(
+            parsedResponse.question,
+            pageSnapshot
           );
-        }
-      }
 
-      // For type actions, ensure value is a string
-      if (action === "type") {
-        if (typeof parsedResponse.value !== "string") {
-          parsedResponse.value = String(parsedResponse.value);
-        }
-      }
+        case "navigate":
+          // Ensure URL is properly formatted
+          if (
+            !parsedResponse.url.startsWith("http://") &&
+            !parsedResponse.url.startsWith("https://")
+          ) {
+            parsedResponse.url = `https://${parsedResponse.url}`;
+          }
+          return parsedResponse;
 
-      // For scroll actions, ensure value is a number
-      if (action === "scroll") {
-        const value = Number(parsedResponse.value);
-        if (isNaN(value)) {
-          throw new Error("Scroll value must be a number");
-        }
-        parsedResponse.value = value;
-      }
+        case "click":
+          // Ensure selector is valid
+          if (parsedResponse.selector.includes(":contains(")) {
+            throw new Error(
+              "Invalid selector: ':contains()' is not a valid CSS selector"
+            );
+          }
+          return parsedResponse;
 
-      // For suggest_action, ensure suggestions is an array
-      if (action === "suggest_action") {
-        if (!Array.isArray(parsedResponse.suggestions)) {
-          parsedResponse.suggestions = [parsedResponse.suggestions];
-        }
-      }
+        case "type":
+          // Ensure value is a string
+          if (typeof parsedResponse.value !== "string") {
+            parsedResponse.value = String(parsedResponse.value);
+          }
+          return parsedResponse;
 
-      return parsedResponse;
+        case "scroll":
+          // Ensure value is a number
+          const value = Number(parsedResponse.value);
+          if (isNaN(value)) {
+            throw new Error("Scroll value must be a number");
+          }
+          parsedResponse.value = value;
+          return parsedResponse;
+
+        case "suggest_action":
+          // Ensure suggestions is an array
+          if (!Array.isArray(parsedResponse.suggestions)) {
+            parsedResponse.suggestions = [parsedResponse.suggestions];
+          }
+          return parsedResponse;
+
+        default:
+          throw new Error(`Unknown action: ${action}`);
+      }
     } catch (err) {
       console.error("Error processing OpenAI response:", err);
       throw new Error(
@@ -678,6 +646,8 @@ You must respond with a valid JSON object. Use this exact format:
         max_tokens: 600,
         response_format: { type: "json_object" },
       });
+
+      console.log("Chat response:", chat.choices[0].message.content);
 
       const response = JSON.parse(chat.choices[0].message.content);
 
