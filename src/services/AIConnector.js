@@ -340,57 +340,101 @@ Please return a single action in JSON format that best accomplishes this command
       // Parse the JSON response
       const parsedResponse = JSON.parse(responseContent);
 
-      // Check if the response action is for content description or summary
-      if (parsedResponse.action === "describe_content") {
+      // Define allowed actions and their required parameters
+      const allowedActions = {
+        navigate: { required: ["url"] },
+        click: { required: ["selector"] },
+        type: { required: ["selector", "value"] },
+        scroll: { required: ["value"] },
+        suggest_action: { required: ["suggestions"] },
+        summary_page: { required: ["summary"] },
+        describe_content: { required: ["description"] },
+        display_answer: { required: ["question", "answer"] },
+      };
+
+      // Validate the action
+      if (!parsedResponse.action) {
+        throw new Error("Response missing 'action' property");
+      }
+
+      const action = parsedResponse.action;
+      if (!allowedActions[action]) {
+        throw new Error(
+          `Invalid action: ${action}. Allowed actions are: ${Object.keys(
+            allowedActions
+          ).join(", ")}`
+        );
+      }
+
+      // Check for required parameters
+      const requiredParams = allowedActions[action].required;
+      const missingParams = requiredParams.filter(
+        (param) => !parsedResponse[param]
+      );
+
+      if (missingParams.length > 0) {
+        throw new Error(
+          `Missing required parameters for action '${action}': ${missingParams.join(
+            ", "
+          )}`
+        );
+      }
+
+      // Handle special cases for content-related actions
+      if (action === "describe_content") {
         return await this.generateContentDescription(pageSnapshot);
       }
 
-      if (parsedResponse.action === "summary_page") {
+      if (action === "summary_page") {
         return await this.generatePageSummary(pageSnapshot);
       }
 
-      // If we got a single action object, return it directly
-      if (parsedResponse.action && typeof parsedResponse.action === "string") {
-        return parsedResponse;
+      // For navigation actions, ensure URL is properly formatted
+      if (action === "navigate") {
+        const url = parsedResponse.url;
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+          parsedResponse.url = `https://${url}`;
+        }
       }
 
-      // If we got a steps array, just return the first item
-      if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
-        return parsedResponse[0];
+      // For click actions, ensure selector is valid
+      if (action === "click") {
+        const selector = parsedResponse.selector;
+        if (selector.includes(":contains(")) {
+          throw new Error(
+            "Invalid selector: ':contains()' is not a valid CSS selector"
+          );
+        }
       }
 
-      // Handle the case where action is nested inside a property
-      if (
-        parsedResponse.steps &&
-        Array.isArray(parsedResponse.steps) &&
-        parsedResponse.steps.length > 0
-      ) {
-        return parsedResponse.steps[0];
+      // For type actions, ensure value is a string
+      if (action === "type") {
+        if (typeof parsedResponse.value !== "string") {
+          parsedResponse.value = String(parsedResponse.value);
+        }
       }
 
-      if (
-        parsedResponse.actions &&
-        Array.isArray(parsedResponse.actions) &&
-        parsedResponse.actions.length > 0
-      ) {
-        return parsedResponse.actions[0];
+      // For scroll actions, ensure value is a number
+      if (action === "scroll") {
+        const value = Number(parsedResponse.value);
+        if (isNaN(value)) {
+          throw new Error("Scroll value must be a number");
+        }
+        parsedResponse.value = value;
       }
 
-      if (
-        parsedResponse.plan &&
-        Array.isArray(parsedResponse.plan) &&
-        parsedResponse.plan.length > 0
-      ) {
-        return parsedResponse.plan[0];
+      // For suggest_action, ensure suggestions is an array
+      if (action === "suggest_action") {
+        if (!Array.isArray(parsedResponse.suggestions)) {
+          parsedResponse.suggestions = [parsedResponse.suggestions];
+        }
       }
 
-      throw new Error("No valid action found in AI response");
+      return parsedResponse;
     } catch (err) {
+      console.error("Error processing OpenAI response:", err);
       throw new Error(
-        "Failed to parse action JSON: " +
-          err.message +
-          ". Content: " +
-          responseContent
+        `Failed to process action: ${err.message}. Response content: ${responseContent}`
       );
     }
   }
