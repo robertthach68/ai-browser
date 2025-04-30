@@ -113,7 +113,7 @@ Please return a single action in JSON format that best accomplishes this command
     console.log("Sending command to OpenAI:", command);
     console.log("Page context URL:", pageContext.url);
 
-    return await this.openai.chat.completions.create({
+    const chat = await this.openai.chat.completions.create({
       model: "gpt-4.1",
       messages: [
         { role: "developer", content: systemPrompt },
@@ -122,6 +122,7 @@ Please return a single action in JSON format that best accomplishes this command
       max_tokens: 500,
       response_format: { type: "json_object" },
     });
+    return chat.choices[0].message.content;
   }
 }
 
@@ -410,12 +411,11 @@ Please return a single action in JSON format that best accomplishes this command
         : "No page text available";
 
       // Step 3: Call OpenAI API through the AIDetermineAction class
-      const chat = await this.aiDetermineAction.determine(
+      const responseContent = await this.aiDetermineAction.determine(
         command,
         pageContext,
         pageText
       );
-      const responseContent = chat.choices[0].message.content;
       console.log("Response content:", responseContent);
 
       // Step 4: Process the API response
