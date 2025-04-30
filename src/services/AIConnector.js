@@ -2,9 +2,133 @@ const OpenAI = require("openai");
 const fs = require("fs");
 const path = require("path");
 
+/**
+ * Class to handle AI-based action determination
+ */
+class AIDetermineAction {
+  constructor(openai) {
+    this.openai = openai;
+  }
+
+  /**
+   * Get system prompt for AI
+   * @returns {string} The system prompt for the AI
+   */
+  getSystemPrompt() {
+    return `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a SINGLE action step in JSON format. The step should have 'action', 'selector', and optional 'value' or 'url'.
+
+Allowed actions:
+- navigate: requires url parameter
+- click: requires selector parameter 
+- type: requires selector and value parameters
+- scroll: requires value parameter (positive for down, negative for up)
+- suggest_action: provides suggestions based on the page content
+- summary_page: provides a summary of the current page
+- describe_content: provides detailed description of the page content
+- display_answer: provides answer to a question based on page content
+
+COMMAND INTERPRETATION RULES:
+1. When the command starts with "click" followed by text (e.g., "click sign in" or "click cry your heart out"), this ALWAYS means the user wants to click on an element containing that text, NOT search for it.
+2. On YouTube specifically, "click [video title]" means finding and clicking on a video thumbnail or title that matches the text.
+3. NEVER convert a "click [text]" command into a search operation unless explicitly instructed to search.
+4. When the command starts with "search for" or explicitly mentions searching, generate a "type" action for search inputs.
+5. Navigation commands (e.g., "go to youtube") should generate a "navigate" action.
+6. Only use "type" action when the user explicitly wants to input text into a field, not when they want to find and click on content.
+7. When the user asks for suggestions or "what can I do", use the "suggest_action" action.
+8. When the user asks for a summary or to summarize the page, use the "summary_page" action.
+9. When the user asks to describe the content or what's on the page, use the "describe_content" action.
+10. When the user asks a question about the page content (like "who is the author of this article?"), use the "display_answer" action.
+
+ELEMENT SELECTION PRIORITY:
+1. First try to find elements with exact text matches in their innerText, textContent, title, aria-label, or alt attributes
+2. Next, try to find elements containing partial text matches
+3. For videos on YouTube, look for title elements, video thumbnails, or link elements
+
+For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed. For accessibility, also consider using XPath selectors when appropriate.
+
+IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.`;
+  }
+
+  /**
+   * Generate user message content for the AI
+   * @param {string} command - The user command
+   * @param {Object} pageContext - The prepared page context
+   * @param {string} pageText - The page text
+   * @returns {string} The user message content
+   */
+  generateUserMessageContent(command, pageContext, pageText) {
+    return `Command: ${command}
+
+Current page: ${JSON.stringify(pageContext, null, 2)}
+
+${pageText}
+
+Processing Instructions:
+1. For ALL "click" commands:
+   - This is ALWAYS a request to find and click on an element containing the specified text
+   - NEVER convert a "click [text]" into a search action unless explicitly told to search
+   - Look for elements where the text matches in: text content, aria-label, title, or alt attributes
+
+2. For YouTube specific handling:
+   - If on YouTube and command is "click [video title]", look for elements marked as isVideoElement=true
+   - For video titles, prefer elements that are links (<a> tags) with matching text
+   - Consider video thumbnails and video titles as valid targets
+
+3. Element selection priority:
+   - First: Exact text matches
+   - Second: Partial text matches beginning with the search text
+   - Third: Any element containing part of the search text
+   - Only use search input as a last resort if NO matching elements can be found
+
+Command analysis:
+${
+  command.toLowerCase().startsWith("click")
+    ? `- This is a CLICK command. The user wants to click on an element matching: "${command
+        .replace("click", "")
+        .trim()}"
+  - DO NOT convert this to a search action - find and click the matching element`
+    : `- Command type: ${
+        command.toLowerCase().includes("search") ? "SEARCH" : "OTHER"
+      }`
+}
+
+Please return a single action in JSON format that best accomplishes this command on the current page.`;
+  }
+
+  /**
+   * Determine the action based on command and page context
+   * @param {string} command - The user command
+   * @param {Object} pageContext - The prepared page context
+   * @param {string} pageText - The page text
+   * @returns {Promise<Object>} The response from OpenAI
+   */
+  async determine(command, pageContext, pageText) {
+    const systemPrompt = this.getSystemPrompt();
+    const userContent = this.generateUserMessageContent(
+      command,
+      pageContext,
+      pageText
+    );
+
+    console.log("Sending command to OpenAI:", command);
+    console.log("Page context URL:", pageContext.url);
+
+    return await this.openai.chat.completions.create({
+      model: "gpt-4.1",
+      messages: [
+        { role: "developer", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: 500,
+      response_format: { type: "json_object" },
+    });
+  }
+}
+
 class AIConnector {
   constructor(apiKey) {
     this.openai = new OpenAI({ apiKey });
+    this.aiDetermineAction = new AIDetermineAction(this.openai);
   }
 
   /**
@@ -90,45 +214,6 @@ class AIConnector {
         break;
     }
     return null;
-  }
-
-  /**
-   * Get system prompt for AI
-   * @returns {string} The system prompt for the AI
-   */
-  getSystemPrompt() {
-    return `You are an AI browser automation agent. Receive a natural language command and the current page content, then output a SINGLE action step in JSON format. The step should have 'action', 'selector', and optional 'value' or 'url'.
-
-Allowed actions:
-- navigate: requires url parameter
-- click: requires selector parameter 
-- type: requires selector and value parameters
-- scroll: requires value parameter (positive for down, negative for up)
-- suggest_action: provides suggestions based on the page content
-- summary_page: provides a summary of the current page
-- describe_content: provides detailed description of the page content
-- display_answer: provides answer to a question based on page content
-
-COMMAND INTERPRETATION RULES:
-1. When the command starts with "click" followed by text (e.g., "click sign in" or "click cry your heart out"), this ALWAYS means the user wants to click on an element containing that text, NOT search for it.
-2. On YouTube specifically, "click [video title]" means finding and clicking on a video thumbnail or title that matches the text.
-3. NEVER convert a "click [text]" command into a search operation unless explicitly instructed to search.
-4. When the command starts with "search for" or explicitly mentions searching, generate a "type" action for search inputs.
-5. Navigation commands (e.g., "go to youtube") should generate a "navigate" action.
-6. Only use "type" action when the user explicitly wants to input text into a field, not when they want to find and click on content.
-7. When the user asks for suggestions or "what can I do", use the "suggest_action" action.
-8. When the user asks for a summary or to summarize the page, use the "summary_page" action.
-9. When the user asks to describe the content or what's on the page, use the "describe_content" action.
-10. When the user asks a question about the page content (like "who is the author of this article?"), use the "display_answer" action.
-
-ELEMENT SELECTION PRIORITY:
-1. First try to find elements with exact text matches in their innerText, textContent, title, aria-label, or alt attributes
-2. Next, try to find elements containing partial text matches
-3. For videos on YouTube, look for title elements, video thumbnails, or link elements
-
-For selectors, use the most specific and reliable CSS selector. Prefer using IDs, then unique classes, then more complex selectors if needed. For accessibility, also consider using XPath selectors when appropriate.
-
-IMPORTANT: Only return a SINGLE action step that can be executed immediately, not a full plan or sequence of steps. This should be the next logical action based on the command and current page state.`;
   }
 
   /**
@@ -244,35 +329,6 @@ Please return a single action in JSON format that best accomplishes this command
   }
 
   /**
-   * Make API call to OpenAI
-   * @param {string} command - The user command
-   * @param {Object} pageContext - The prepared page context
-   * @param {string} pageText - The page text
-   * @returns {Promise<Object>} The response from OpenAI
-   */
-  async callOpenAI(command, pageContext, pageText) {
-    const systemPrompt = this.getSystemPrompt();
-    const userContent = this.generateUserMessageContent(
-      command,
-      pageContext,
-      pageText
-    );
-
-    console.log("Sending command to OpenAI:", command);
-    console.log("Page context URL:", pageContext.url);
-
-    return await this.openai.chat.completions.create({
-      model: "gpt-4.1",
-      messages: [
-        { role: "developer", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      max_tokens: 500,
-      response_format: { type: "json_object" },
-    });
-  }
-
-  /**
    * Process response from OpenAI
    * @param {string} responseContent - The response content
    * @param {Object} pageSnapshot - The page snapshot data
@@ -353,8 +409,12 @@ Please return a single action in JSON format that best accomplishes this command
         ? `Page text snippet: ${pageContent.text.substring(0, 500)}...`
         : "No page text available";
 
-      // Step 3: Call OpenAI API
-      const chat = await this.callOpenAI(command, pageContext, pageText);
+      // Step 3: Call OpenAI API through the AIDetermineAction class
+      const chat = await this.aiDetermineAction.determine(
+        command,
+        pageContext,
+        pageText
+      );
       const responseContent = chat.choices[0].message.content;
       console.log("Response content:", responseContent);
 
