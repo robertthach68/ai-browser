@@ -389,6 +389,13 @@ Please return a single action in JSON format that best accomplishes this command
         return await this.generatePageSummary(pageSnapshot);
       }
 
+      if (action === "display_answer") {
+        return await this.generateQuestionAnswer(
+          parsedResponse.question,
+          pageSnapshot
+        );
+      }
+
       // For navigation actions, ensure URL is properly formatted
       if (action === "navigate") {
         const url = parsedResponse.url;
@@ -860,15 +867,15 @@ You must respond with a valid JSON object. Use this exact format:
 
       return {
         action: "display_answer",
-        answer,
         question,
+        answer,
       };
     } catch (error) {
       console.error("Error generating question answer:", error);
       return {
         action: "display_answer",
-        answer: "Error answering question: " + error.message,
         question,
+        answer: "Error answering question: " + error.message,
       };
     }
   }
