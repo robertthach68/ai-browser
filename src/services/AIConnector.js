@@ -186,38 +186,6 @@ class AIConnector {
   }
 
   /**
-   * Execute action based on command intent and page snapshot
-   * @param {string} intentAction - The determined action intent
-   * @param {Object} pageSnapshot - The page snapshot data
-   * @param {string} command - The original command
-   * @returns {Promise<Object>} Action object
-   */
-  async executeCommandIntent(intentAction, pageSnapshot, command) {
-    switch (intentAction) {
-      case "suggest_action":
-        return await this.generateSuggestedActions(pageSnapshot);
-      case "summary_page":
-        return await this.generatePageSummary(pageSnapshot);
-      case "describe_content":
-        return await this.generateContentDescription(pageSnapshot);
-      case "answer_question":
-        return await this.generateQuestionAnswer(command, pageSnapshot);
-      case "navigate":
-        // Simple navigation without page info
-        if (!pageSnapshot.url) {
-          const targetUrl = this.extractUrlFromCommand(command);
-          console.log(`Creating a simple navigation step to ${targetUrl}`);
-          return {
-            action: "navigate",
-            url: targetUrl,
-          };
-        }
-        break;
-    }
-    return null;
-  }
-
-  /**
    * Prepare YouTube-specific element info
    * @param {Object} el - The element
    * @param {boolean} isYouTube - Whether the page is YouTube
