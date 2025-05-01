@@ -678,57 +678,210 @@ class App {
    * Set up IPC listeners for main process communication
    */
   setupIPCListeners() {
-    // Listen for plan updates
+    // Listen for plan updates from main process
     window.aiBrowser.onPlanUpdate((plan) => {
-      console.log("Received plan update:", plan);
+      console.log("Received plan from main process:", plan);
+      // Send plan to executor for execution
+      this.planExecutor.executePlan(plan);
     });
 
-    // Listen for browser actions
-    window.aiBrowser.onBrowserAction((data) => {
-      console.log("Browser action:", data);
-      if (data.message) {
-        this.statusSpan.innerText = data.message;
-        setTimeout(() => {
-          this.statusSpan.innerText = "";
-        }, 3000);
-      }
+    // Listen for command satisfaction notifications
+    window.aiBrowser.onCommandSatisfied((data) => {
+      console.log("Command satisfied:", data);
+      // Show a success notification to the user
+      this.showCommandCompletedNotification(data);
     });
 
-    // Listen for webview DevTools toggle
-    window.aiBrowser.onWebviewDevTools(() => {
-      this.webview.isDevToolsOpened()
-        ? this.webview.closeDevTools()
-        : this.webview.openDevTools();
+    // Listen for max steps reached notifications
+    window.aiBrowser.onCommandMaxSteps((data) => {
+      console.log("Command reached max steps:", data);
+      // Show a warning notification to the user
+      this.showMaxStepsNotification(data);
     });
 
-    // Listen for page snapshot requests
+    // Listen for page snapshot requests from main process
     window.aiBrowser.onGetPageSnapshot(async () => {
       try {
-        // Use the PageContentExtractor to capture the page snapshot
+        console.log("Received page snapshot request from main");
         const pageData = await this.pageContentExtractor.capturePageSnapshot();
-
-        // Save page data to a file
-        this.savePageDataToFile(pageData);
-
         await window.aiBrowser.sendPageSnapshot(pageData);
       } catch (error) {
-        console.error("Error in page snapshot handler:", error);
-        // Send empty data if there was an error
-        await window.aiBrowser.sendPageSnapshot({});
+        console.error("Error getting page snapshot:", error);
+        // Send error response
+        await window.aiBrowser.sendPageSnapshot({
+          error: error.message,
+        });
       }
     });
 
-    // Listen for global shortcut: Voice Prompt (Command+L)
+    // Listen for webview devtools toggle
+    window.aiBrowser.onWebviewDevTools(() => {
+      if (this.webview.isDevToolsOpened()) {
+        this.webview.closeDevTools();
+      } else {
+        this.webview.openDevTools();
+      }
+    });
+
+    // Listen for voice prompt request
     window.aiBrowser.onVoicePromptTriggered(() => {
-      console.log("Global shortcut triggered: Voice Prompt");
       this.startVoicePrompt();
     });
 
-    // Listen for global shortcut: Describe Page (Command+D)
+    // Listen for describe page request
     window.aiBrowser.onDescribePageTriggered(() => {
-      console.log("Global shortcut triggered: Describe Page");
       this.describePageAloud();
     });
+  }
+
+  /**
+   * Show a notification that a command has been completed successfully
+   * @param {Object} data - Data about the command completion
+   */
+  showCommandCompletedNotification(data) {
+    const container = document.createElement("div");
+    container.className = "notification success-notification";
+    container.innerHTML = `
+      <div class="notification-content">
+        <div class="notification-icon">✓</div>
+        <div class="notification-message">
+          <h3>Command Completed Successfully</h3>
+          <p>The command "${data.command}" was satisfied after ${data.steps} ${
+      data.steps === 1 ? "step" : "steps"
+    }.</p>
+          <p class="notification-reason">${data.verification.reason}</p>
+        </div>
+        <button class="notification-close">×</button>
+      </div>
+    `;
+
+    document.body.appendChild(container);
+
+    // Add styles if not already present
+    if (!document.getElementById("notification-styles")) {
+      const style = document.createElement("style");
+      style.id = "notification-styles";
+      style.textContent = `
+        .notification {
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          max-width: 400px;
+          background-color: white;
+          border-radius: 8px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 1000;
+          overflow: hidden;
+          transition: all 0.3s ease;
+        }
+        .success-notification {
+          border-left: 4px solid #4CAF50;
+        }
+        .warning-notification {
+          border-left: 4px solid #FF9800;
+        }
+        .notification-content {
+          display: flex;
+          padding: 16px;
+        }
+        .notification-icon {
+          font-size: 24px;
+          margin-right: 16px;
+          display: flex;
+          align-items: center;
+        }
+        .success-notification .notification-icon {
+          color: #4CAF50;
+        }
+        .warning-notification .notification-icon {
+          color: #FF9800;
+        }
+        .notification-message {
+          flex: 1;
+        }
+        .notification-message h3 {
+          margin: 0 0 8px 0;
+          font-size: 16px;
+        }
+        .notification-message p {
+          margin: 0;
+          font-size: 14px;
+          color: #666;
+        }
+        .notification-reason {
+          font-style: italic;
+          margin-top: 8px !important;
+        }
+        .notification-close {
+          background: none;
+          border: none;
+          font-size: 20px;
+          cursor: pointer;
+          color: #999;
+          margin-left: 8px;
+        }
+        .notification-close:hover {
+          color: #333;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Set up close button
+    const closeBtn = container.querySelector(".notification-close");
+    closeBtn.addEventListener("click", () => {
+      container.style.opacity = "0";
+      setTimeout(() => {
+        container.remove();
+      }, 300);
+    });
+
+    // Auto-dismiss after 8 seconds
+    setTimeout(() => {
+      container.style.opacity = "0";
+      setTimeout(() => {
+        container.remove();
+      }, 300);
+    }, 8000);
+  }
+
+  /**
+   * Show a notification that a command has reached max steps without completion
+   * @param {Object} data - Data about the command execution
+   */
+  showMaxStepsNotification(data) {
+    const container = document.createElement("div");
+    container.className = "notification warning-notification";
+    container.innerHTML = `
+      <div class="notification-content">
+        <div class="notification-icon">⚠️</div>
+        <div class="notification-message">
+          <h3>Command Not Fully Completed</h3>
+          <p>The command "${data.command}" reached the maximum number of steps (${data.steps}).</p>
+          <p class="notification-reason">${data.verification.reason}</p>
+        </div>
+        <button class="notification-close">×</button>
+      </div>
+    `;
+
+    document.body.appendChild(container);
+
+    // Set up close button
+    const closeBtn = container.querySelector(".notification-close");
+    closeBtn.addEventListener("click", () => {
+      container.style.opacity = "0";
+      setTimeout(() => {
+        container.remove();
+      }, 300);
+    });
+
+    // Auto-dismiss after 8 seconds
+    setTimeout(() => {
+      container.style.opacity = "0";
+      setTimeout(() => {
+        container.remove();
+      }, 300);
+    }, 8000);
   }
 
   /**

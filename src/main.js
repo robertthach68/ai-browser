@@ -6,6 +6,7 @@ const fs = require("fs");
 // Import our classes
 const AIConnector = require("./services/AIConnector");
 const AIPageReader = require("./services/AIPageReader");
+const AIVerification = require("./services/AIVerification");
 const Logger = require("./utils/Logger");
 const AppMenu = require("./components/AppMenu");
 const SpeechService = require("./services/SpeechService");
@@ -14,9 +15,14 @@ const SpeechService = require("./services/SpeechService");
 let mainWindow;
 let aiConnector;
 let aiPageReader;
+let aiVerification;
 let logger;
 let speechService;
 let pendingPageSnapshotPromises = {};
+
+// Constants for multi-step command execution
+const MAX_EXECUTION_STEPS = 5; // Maximum number of steps to try before giving up
+const CONFIDENCE_THRESHOLD = 0.7; // Minimum confidence level to consider a command satisfied
 
 /**
  * Create the main application window
@@ -48,6 +54,9 @@ function initialize() {
   // Create our service instances
   aiConnector = new AIConnector(process.env.OPENAI_API_KEY);
   aiPageReader = new AIPageReader(process.env.OPENAI_API_KEY);
+  aiVerification = new AIVerification(
+    new (require("openai"))({ apiKey: process.env.OPENAI_API_KEY })
+  );
   speechService = new SpeechService();
   logger = new Logger();
 
@@ -115,24 +124,100 @@ function setupIpcHandlers() {
       // Create a promise to get the page data
       let action;
       let pageData = {};
+      let stepCount = 0;
+      let commandSatisfied = false;
+      let verificationResult = {
+        satisfied: false,
+        confidence: 0,
+        reason: "Command execution not started",
+      };
 
       // Simple direct handling for navigation commands
       if (command.toLowerCase().includes("go to")) {
         action = await aiConnector.generatePlan(command, {});
-      } else {
-        // For more complex commands, we need page data
-        try {
-          pageData = await getPageSnapshot(event.sender.id);
-          console.log("Page data:", pageData);
-          action = await aiConnector.generatePlan(command, pageData);
-        } catch (error) {
-          console.log("Could not get page data, using fallback:", error);
-          action = await aiConnector.generatePlan(command, {});
-        }
-      }
+        event.sender.send("plan-update", action);
 
-      event.sender.send("plan-update", action);
-      return { status: "ok", action, command, pageSnapshot: pageData };
+        // No verification for navigation commands - we'll assume it worked
+        return { status: "ok", action, command, pageSnapshot: pageData };
+      } else {
+        // Multi-step execution for all other commands
+        while (!commandSatisfied && stepCount < MAX_EXECUTION_STEPS) {
+          stepCount++;
+          console.log(
+            `Executing command step ${stepCount} of ${MAX_EXECUTION_STEPS}`
+          );
+
+          try {
+            // Get the current page data
+            pageData = await getPageSnapshot(event.sender.id);
+            console.log(
+              `Step ${stepCount}: Generating plan for command:`,
+              command
+            );
+
+            // Generate the next action
+            action = await aiConnector.generatePlan(command, pageData);
+
+            // Send the action to the renderer for execution
+            event.sender.send("plan-update", action);
+
+            // Wait for the action to be executed (giving time for page to update)
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+
+            // Get updated page data after action execution
+            const updatedPageData = await getPageSnapshot(event.sender.id);
+
+            // Verify if the command has been satisfied
+            verificationResult = await aiVerification.check(
+              command,
+              updatedPageData
+            );
+            console.log(
+              `Step ${stepCount}: Verification result:`,
+              verificationResult
+            );
+
+            // Check if we consider the command satisfied
+            commandSatisfied =
+              verificationResult.satisfied &&
+              verificationResult.confidence >= CONFIDENCE_THRESHOLD;
+
+            if (commandSatisfied) {
+              console.log(`Command satisfied after ${stepCount} steps`);
+              // Send a final update indicating success
+              event.sender.send("command-satisfied", {
+                command,
+                steps: stepCount,
+                verification: verificationResult,
+              });
+              break;
+            } else if (stepCount >= MAX_EXECUTION_STEPS) {
+              console.log(
+                `Reached maximum steps (${MAX_EXECUTION_STEPS}) without satisfaction`
+              );
+              // Send a notification that we've reached max steps
+              event.sender.send("command-max-steps", {
+                command,
+                steps: stepCount,
+                verification: verificationResult,
+              });
+            }
+          } catch (error) {
+            console.error(`Error in step ${stepCount}:`, error);
+            // Continue to next step rather than failing completely
+          }
+        }
+
+        return {
+          status: "ok",
+          action,
+          command,
+          pageSnapshot: pageData,
+          stepCount,
+          commandSatisfied,
+          verificationResult,
+        };
+      }
     } catch (err) {
       console.error("Error executing command:", err);
       return { status: "error", error: err.message };

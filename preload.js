@@ -5,6 +5,11 @@ contextBridge.exposeInMainWorld("aiBrowser", {
   executeCommand: (command) => ipcRenderer.invoke("execute-command", command),
   onPlanUpdate: (callback) =>
     ipcRenderer.on("plan-update", (event, plan) => callback(plan)),
+  // Multi-step command execution events
+  onCommandSatisfied: (callback) =>
+    ipcRenderer.on("command-satisfied", (event, data) => callback(data)),
+  onCommandMaxSteps: (callback) =>
+    ipcRenderer.on("command-max-steps", (event, data) => callback(data)),
 
   // Page snapshot functionality
   onGetPageSnapshot: (callback) =>
