@@ -50,6 +50,151 @@ IMPORTANT: Only return a SINGLE action step that can be executed immediately, no
   }
 
   /**
+   * Extract relevant content chunks from page text based on prompt keywords
+   * @param {string} command - The user command
+   * @param {string} pageText - The full page text
+   * @param {number} chunkSize - Words to include around each match (default: 100)
+   * @returns {string} Filtered page text with relevant chunks
+   */
+  extractRelevantContent(command, pageText, chunkSize = 100) {
+    if (!command || !pageText || pageText.length < 50) {
+      return pageText;
+    }
+
+    // Extract both individual words and phrases from command
+    const stopWords = [
+      "a",
+      "an",
+      "the",
+      "and",
+      "or",
+      "but",
+      "in",
+      "on",
+      "at",
+      "to",
+      "for",
+      "with",
+    ];
+    const actionWords = ["click", "search", "go", "find", "open", "get"];
+
+    // Clean up command - remove action verbs from the beginning
+    let cleanCommand = command.toLowerCase();
+    for (const action of actionWords) {
+      if (cleanCommand.startsWith(action)) {
+        cleanCommand = cleanCommand.replace(new RegExp(`^${action}\\s+`), "");
+        break;
+      }
+    }
+
+    // Get individual keywords (excluding stop words)
+    const keywords = cleanCommand
+      .split(/\s+/)
+      .filter(
+        (word) =>
+          word.length > 2 &&
+          !stopWords.includes(word) &&
+          !actionWords.includes(word)
+      );
+
+    // Also get multi-word phrases (2-3 word combinations)
+    const commandWords = cleanCommand.split(/\s+/);
+    const phrases = [];
+
+    // Add 2-word phrases
+    for (let i = 0; i < commandWords.length - 1; i++) {
+      phrases.push(commandWords.slice(i, i + 2).join(" "));
+    }
+
+    // Add 3-word phrases if command is long enough
+    if (commandWords.length >= 3) {
+      for (let i = 0; i < commandWords.length - 2; i++) {
+        phrases.push(commandWords.slice(i, i + 3).join(" "));
+      }
+    }
+
+    // Also add the entire command as a potential phrase to match
+    if (cleanCommand.split(/\s+/).length >= 2) {
+      phrases.push(cleanCommand);
+    }
+
+    if (keywords.length === 0 && phrases.length === 0) {
+      return pageText; // No significant keywords found
+    }
+
+    // Split page text into words for word-level matching
+    const words = pageText.split(/\s+/);
+    const chunks = new Set();
+
+    // For each keyword, find matches and extract chunks
+    for (const keyword of keywords) {
+      for (let i = 0; i < words.length; i++) {
+        if (words[i].toLowerCase().includes(keyword)) {
+          // Found a match, extract chunk around it
+          const start = Math.max(0, i - Math.floor(chunkSize / 2));
+          const end = Math.min(words.length, i + Math.floor(chunkSize / 2));
+          const chunk = words.slice(start, end).join(" ");
+          chunks.add(chunk);
+        }
+      }
+    }
+
+    // For each phrase, find matches in the full text
+    for (const phrase of phrases) {
+      // Using regex to find the phrase in the full text
+      const phraseRegex = new RegExp(
+        `\\b${phrase.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`,
+        "i"
+      );
+      if (phraseRegex.test(pageText)) {
+        // Find each occurrence of the phrase
+        let match;
+        let phraseRegexGlobal = new RegExp(
+          `\\b${phrase.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`,
+          "gi"
+        );
+
+        while ((match = phraseRegexGlobal.exec(pageText)) !== null) {
+          // Extract context around the match
+          const matchIndex = match.index;
+          const matchLength = match[0].length;
+
+          // Find word boundaries to extract ~chunkSize words around match
+          const beforeText = pageText.substring(0, matchIndex);
+          const afterText = pageText.substring(matchIndex + matchLength);
+
+          // Count ~chunkSize/2 words before
+          const wordsBeforeCount = Math.floor(chunkSize / 2);
+          let beforeChunk = beforeText
+            .split(/\s+/)
+            .slice(-wordsBeforeCount)
+            .join(" ");
+
+          // Count ~chunkSize/2 words after
+          const wordsAfterCount = Math.floor(chunkSize / 2);
+          let afterChunk = afterText
+            .split(/\s+/)
+            .slice(0, wordsAfterCount)
+            .join(" ");
+
+          const fullChunk = `${beforeChunk} ${match[0]} ${afterChunk}`.trim();
+          chunks.add(fullChunk);
+        }
+      }
+    }
+
+    // If no chunks found, return a portion of the original text
+    if (chunks.size === 0) {
+      return pageText.length > 1000
+        ? pageText.substring(0, 1000) + "..."
+        : pageText;
+    }
+
+    // Join all unique chunks with a separator for clarity
+    return Array.from(chunks).join("\n\n--- Relevant Content Section ---\n\n");
+  }
+
+  /**
    * Generate user message content for the AI
    * @param {string} command - The user command
    * @param {Object} pageContext - The prepared page context
@@ -104,10 +249,27 @@ Please return a single action in JSON format that best accomplishes this command
    */
   async determine(command, pageContext, pageText) {
     const systemPrompt = this.getSystemPrompt();
+
+    // Process page text to extract relevant chunks based on command keywords
+    const processedPageText = this.extractRelevantContent(command, pageText);
+
+    // Add debug logging to show extraction results
+    console.log(
+      `Original page text length: ${pageText.length}, Processed text length: ${processedPageText.length}`
+    );
+    if (pageText.length > processedPageText.length) {
+      console.log(
+        `Content reduced by ${(
+          100 -
+          (processedPageText.length / pageText.length) * 100
+        ).toFixed(2)}%`
+      );
+    }
+
     const userContent = this.generateUserMessageContent(
       command,
       pageContext,
-      pageText
+      processedPageText
     );
 
     console.log("Sending command to OpenAI:", command);
@@ -393,9 +555,17 @@ Please return a single action in JSON format that best accomplishes this command
       // Step 2: Prepare the page context and text
       const pageContext = this.prepareAIContext(pageSnapshot);
       const pageContent = pageSnapshot.content || {};
-      const pageText = pageContent.text
-        ? `Page text snippet: ${pageContent.text.substring(0, 500)}...`
-        : "No page text available";
+
+      // Get full page text if available, or a snippet
+      let pageText = "";
+      if (pageContent.text) {
+        // Use full text instead of just a snippet for better content extraction
+        pageText = pageContent.text;
+      } else if (pageSnapshot.fullText) {
+        pageText = pageSnapshot.fullText;
+      } else {
+        pageText = "No page text available";
+      }
 
       // Step 3: Call OpenAI API through the AIDetermineAction class
       const responseContent = await this.aiDetermineAction.determine(
