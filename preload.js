@@ -43,4 +43,6 @@ contextBridge.exposeInMainWorld("aiBrowser", {
     ipcRenderer.on("trigger-voice-prompt", () => callback()),
   onDescribePageTriggered: (callback) =>
     ipcRenderer.on("trigger-describe-page", () => callback()),
+  onEmergencyStop: (callback) =>
+    ipcRenderer.on("emergency-stop", () => callback()),
 });

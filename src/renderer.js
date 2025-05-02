@@ -732,6 +732,59 @@ class App {
     window.aiBrowser.onDescribePageTriggered(() => {
       this.describePageAloud();
     });
+
+    // Listen for emergency stop
+    window.aiBrowser.onEmergencyStop(() => {
+      console.log("Emergency stop triggered");
+
+      // Stop any ongoing actions by interrupting the plan executor
+      if (this.planExecutor) {
+        this.planExecutor.stopExecution = true;
+      }
+
+      // Reset UI state
+      this.commandInput.disabled = false;
+      this.executeBtn.disabled = false;
+      this.commandInput.value = "";
+      this.statusSpan.innerText = "⚠️ Actions stopped by emergency shortcut";
+
+      // Show notification to user
+      const container = document.createElement("div");
+      container.className = "notification warning-notification";
+      container.innerHTML = `
+        <div class="notification-content">
+          <div class="notification-icon">⚠️</div>
+          <div class="notification-message">
+            <h3>Emergency Stop</h3>
+            <p>All actions have been stopped and the command has been reset.</p>
+          </div>
+          <button class="notification-close">×</button>
+        </div>
+      `;
+
+      document.body.appendChild(container);
+
+      // Add close button functionality
+      const closeBtn = container.querySelector(".notification-close");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", () => {
+          container.remove();
+        });
+      }
+
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        if (document.body.contains(container)) {
+          container.remove();
+        }
+      }, 5000);
+
+      // Log the emergency stop
+      this.logAction({
+        action: "emergency-stop",
+        timestamp: new Date().toISOString(),
+      });
+    });
   }
 
   /**
@@ -1570,6 +1623,7 @@ class PlanExecutor {
     this.webview = webview;
     this.statusElement = statusElement;
     this.logger = logger;
+    this.stopExecution = false;
   }
 
   /**
@@ -1584,13 +1638,31 @@ class PlanExecutor {
       return;
     }
 
+    // Reset stop flag at the beginning of execution
+    this.stopExecution = false;
+
     console.log("Renderer PlanExecutor: executing action", action);
     const { action: actionType, selector, value, url, xpath } = action;
 
     this.updateStatus(`Executing ${actionType}`);
 
     try {
+      // Check if execution has been stopped before proceeding
+      if (this.stopExecution) {
+        console.log("Execution stopped by emergency stop");
+        this.updateStatus("Execution stopped");
+        return;
+      }
+
       await this.executeStep(action);
+
+      // Check again after execution in case it was stopped during the step
+      if (this.stopExecution) {
+        console.log("Execution stopped by emergency stop after step completed");
+        this.updateStatus("Execution stopped");
+        return;
+      }
+
       console.log(
         `Renderer PlanExecutor: action ${actionType} completed successfully`
       );
@@ -1629,6 +1701,11 @@ class PlanExecutor {
   async executeStep(step) {
     if (!step || !step.action) {
       throw new Error("Invalid step: missing action property");
+    }
+
+    // Check if execution has been stopped
+    if (this.stopExecution) {
+      throw new Error("Execution stopped by emergency stop");
     }
 
     const { action, selector, value, url, xpath } = step;

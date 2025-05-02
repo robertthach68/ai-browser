@@ -90,6 +90,17 @@ function registerGlobalShortcuts() {
     }
   });
 
+  // Register Command+S as emergency stop
+  const emergencyStopAccelerator =
+    process.platform === "darwin" ? "Command+S" : "Ctrl+S";
+
+  globalShortcut.register(emergencyStopAccelerator, () => {
+    console.log("Global shortcut triggered: Emergency Stop");
+    if (mainWindow) {
+      mainWindow.webContents.send("emergency-stop");
+    }
+  });
+
   console.log("Global shortcuts registered");
 }
 
