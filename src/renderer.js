@@ -615,8 +615,21 @@ class App {
       this.statusSpan.innerText = "Planning...";
 
       try {
+        // Capture page snapshot before sending command
+        let pageSnapshot = null;
+        try {
+          pageSnapshot = await this.pageContentExtractor.capturePageSnapshot();
+          console.log("Captured page snapshot for command execution");
+        } catch (snapshotError) {
+          console.error("Error capturing page snapshot:", snapshotError);
+          // Continue with null snapshot, the main process will handle it
+        }
+
         console.log("Sending command to main process:", command);
-        const resp = await window.aiBrowser.executeCommand(command);
+        const resp = await window.aiBrowser.executeCommand(
+          command,
+          pageSnapshot
+        );
         console.log("Received response from main process:", resp);
 
         if (resp.status !== "ok") {

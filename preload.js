@@ -2,7 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("aiBrowser", {
   // Command execution and plan handling
-  executeCommand: (command) => ipcRenderer.invoke("execute-command", command),
+  executeCommand: (command, pageSnapshot) =>
+    ipcRenderer.invoke("execute-command", command, pageSnapshot),
   onPlanUpdate: (callback) =>
     ipcRenderer.on("plan-update", (event, plan) => callback(plan)),
   // Multi-step command execution events

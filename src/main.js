@@ -128,13 +128,13 @@ function setupIpcHandlers() {
   });
 
   // Handle execute command
-  ipcMain.handle("execute-command", async (event, command) => {
+  ipcMain.handle("execute-command", async (event, command, pageSnapshot) => {
     try {
       console.log("Received command from renderer:", command);
 
       // Create a promise to get the page data
       let action;
-      let pageData = {};
+      let pageData = pageSnapshot || {};
       let stepCount = 0;
       let commandSatisfied = false;
       let verificationResult = {
@@ -145,7 +145,7 @@ function setupIpcHandlers() {
 
       // Simple direct handling for navigation commands
       if (command.toLowerCase().includes("go to")) {
-        action = await aiConnector.generatePlan(command, {});
+        action = await aiConnector.generatePlan(command, pageData);
         event.sender.send("plan-update", action);
 
         // No verification for navigation commands - we'll assume it worked
@@ -159,8 +159,10 @@ function setupIpcHandlers() {
           );
 
           try {
-            // Get the current page data
-            pageData = await getPageSnapshot(event.sender.id);
+            // Get the current page data if not provided
+            // if (!pageSnapshot) {
+            //   pageData = await getPageSnapshot(event.sender.id);
+            // }
             console.log(
               `Step ${stepCount}: Generating plan for command:`,
               command
